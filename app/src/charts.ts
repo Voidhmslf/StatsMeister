@@ -24,6 +24,7 @@ export const CHARTS: ChartDef[] = [
   { key: "speed", title: "Speed", unit: "km/h", height: 200, digits: 1 },
   { key: "throttle", title: "Throttle", unit: "%", height: 100, mul: 100, range: [0, 100], digits: 0 },
   { key: "brake", title: "Brake", unit: "%", height: 100, mul: 100, range: [0, 100], digits: 0 },
+  { key: "steer_deg", title: "Steering", unit: "°", height: 110, digits: 0 },
   { key: "steer", title: "Steering", unit: "%", height: 110, mul: 100, digits: 0 },
   { key: "gear", title: "Gear", unit: "", height: 80, stepped: true, digits: 0 },
   { key: "rpm", title: "RPM", unit: "", height: 110, digits: 0 },
@@ -54,9 +55,13 @@ export function buildCharts(
   const width = Math.max(300, root.clientWidth - 8);
   let syncing = false;
 
-  const defs = CHARTS.filter((d) =>
-    d.key === "delta" ? cmp.delta != null : cmp.reference.channels[d.key] != null,
-  );
+  const has = (key: string) => cmp.reference.channels[key] != null;
+  const defs = CHARTS.filter((d) => {
+    if (d.key === "delta") return cmp.delta != null;
+    // Prefer the steering angle in degrees when the source provides it.
+    if (d.key === "steer" && has("steer_deg")) return false;
+    return has(d.key);
+  });
 
   defs.forEach((def, n) => {
     const wrap = document.createElement("div");

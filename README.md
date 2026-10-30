@@ -14,10 +14,12 @@ Early development. What works today:
 | Area | State |
 |---|---|
 | Assetto Corsa / ACC (shared memory) | ✅ physics + graphics + static pages, ~333 Hz polling |
+| Assetto Corsa replays (`.acreplay`, v16) import | ✅ ~33 Hz: inputs, speed, rpm, gear, g-forces, wheel speeds/loads/slip, position |
 | Demo source (synthetic car on a fake circuit) | ✅ develop & test without a game |
 | Recording, lap detection, official lap times, pit/cut flags | ✅ |
 | Storage: Parquet (zstd) + JSON metadata | ✅ |
 | Lap comparison on distance, delta, track map, cursor readout, lap stats | ✅ |
+| Per-corner breakdown: time lost, min speed, braking and throttle points | ✅ click a corner to zoom |
 | CSV export (session or lap) | ✅ |
 | iRacing, AMS2, LMU / rFactor 2, MoTeC `.ld` export, AI coach | 🗺️ see [docs/ROADMAP.md](docs/ROADMAP.md) |
 
@@ -72,13 +74,20 @@ statsmeister record                    # auto-detect a running game, Ctrl+C to s
 statsmeister record --source demo --fast --laps 5
 statsmeister list
 statsmeister laps latest
-statsmeister compare latest:best latest:3
+statsmeister import "sokol hotlap.acreplay"   # also: Import button or drag & drop in the app
+statsmeister compare latest:best latest:3     # per-corner table
 statsmeister export latest --lap 3 -o lap3.csv
 ```
 
 ## In-game setup
 
 - **Assetto Corsa / ACC** — nothing to configure; shared memory is always on.
+- **AC replays** — saved in `Documents\Assetto Corsa\replay`. Replays hold
+  less than live recording (no tyre temperatures/pressures, fuel, ABS/TC or
+  track-limit info, and only the replay sample rate), so record live for
+  practice sessions and use import for older laps. Set *Replay quality* to the
+  maximum in AC's settings for the best resolution. Test a real file with
+  `STATSMEISTER_TEST_REPLAY=path\to\file.acreplay cargo test -p sm-sources`.
 
 ## Adding a game
 

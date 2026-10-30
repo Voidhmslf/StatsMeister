@@ -24,7 +24,10 @@
       <section class="panel">
         <div class="panel-head">
           <h2>Sessions</h2>
-          <button id="refresh" class="btn btn-ghost" title="Refresh">↻</button>
+          <div class="panel-actions">
+            <button id="import" class="btn btn-ghost" title="Import an Assetto Corsa replay (.acreplay) — or drop it on the window">Import</button>
+            <button id="refresh" class="btn btn-ghost" title="Refresh">↻</button>
+          </div>
         </div>
         <ul id="sessions" class="sessions"></ul>
       </section>
@@ -40,6 +43,7 @@
 
     <main class="main">
       <div id="summary" class="summary"></div>
+      <div id="corners" class="corners"></div>
       <div id="charts" class="charts">
         <div class="empty">Select a lap to analyse. No data yet? Choose <b>Demo</b> and press <b>Record</b>.</div>
       </div>
@@ -61,6 +65,7 @@
       </section>
     </aside>
 
+    <div id="drop" class="drop"><div>Drop <b>.acreplay</b> to import</div></div>
     <div id="toast" class="toast"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

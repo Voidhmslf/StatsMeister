@@ -6,9 +6,9 @@ pub use laps::{LapEvent, LapTracker};
 
 use anyhow::Result;
 use serde::Serialize;
-use sm_core::{Frame, Poll, SessionInfo, TelemetrySource};
+use sm_core::{ChannelDef, Frame, Poll, SessionInfo, TelemetrySource};
 use sm_storage::{LapMeta, SessionMeta, SessionWriter};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -212,6 +212,39 @@ fn finish(
             message: format!("finishing session {}: {e:#}", meta.id),
         });
     }
+}
+
+/// Stores already-captured frames (e.g. from a replay file) as one session,
+/// running the same lap detection as live recording.
+pub fn import_frames(
+    data_dir: &Path,
+    info: &SessionInfo,
+    source: &str,
+    channels: &[ChannelDef],
+    frames: &[Frame],
+) -> Result<SessionMeta> {
+    let (Some(first), Some(last)) = (frames.first(), frames.last()) else {
+        anyhow::bail!("nothing to import");
+    };
+    let (mut meta, mut writer) = sm_storage::create_session(data_dir, info, source, channels)?;
+    let mut tracker = LapTracker::new(channels);
+    let result = (|| -> Result<()> {
+        for f in frames {
+            writer.push(f)?;
+            tracker.push(f);
+        }
+        Ok(())
+    })();
+    if let Err(e) = result {
+        sm_storage::delete_session(data_dir, &meta.id).ok();
+        return Err(e);
+    }
+    meta.frames = writer.finish()?;
+    meta.laps = tracker.finish(last.t);
+    meta.duration_s = last.t - first.t;
+    meta.finished = true;
+    sm_storage::write_meta(data_dir, &meta)?;
+    Ok(meta)
 }
 
 #[cfg(test)]

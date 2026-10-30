@@ -41,6 +41,8 @@ enum Cmd {
     Laps { session: String },
     /// Compare two laps: SESSION:LAP (LAP may be "best")
     Compare { reference: String, other: String },
+    /// Import an Assetto Corsa replay (.acreplay) as a session
+    Import { file: PathBuf },
     /// Export a session or a single lap to CSV
     Export {
         session: String,
@@ -59,6 +61,7 @@ fn main() -> Result<()> {
         Cmd::List => list(&root),
         Cmd::Laps { session } => laps(&root, &session),
         Cmd::Compare { reference, other } => compare(&root, &reference, &other),
+        Cmd::Import { file } => import(&root, &file),
         Cmd::Export { session, lap, out } => export(&root, &session, lap, &out),
     }
 }
@@ -185,31 +188,68 @@ fn compare(root: &Path, a: &str, b: &str) -> Result<()> {
     let (db, lb) = parse_lap_ref(root, b)?;
     let ta = sm_analysis::LapTrace::new(&da, da.meta.lap(la).expect("checked"));
     let tb = sm_analysis::LapTrace::new(&db, db.meta.lap(lb).expect("checked"));
-    let cmp = sm_analysis::compare_laps(&ta, Some(&tb), &[sm_core::ch::SPEED], 5.0);
-    let delta = cmp.delta.as_deref().unwrap_or_default();
+    use sm_core::ch;
+    let cmp = sm_analysis::compare_laps(&ta, Some(&tb), &[ch::SPEED, ch::BRAKE, ch::THROTTLE], 1.0);
     println!(
-        "Reference lap {la}: {}   Compare lap {lb}: {}",
+        "A = lap {la} {}   B = lap {lb} {}   track ≈ {:.0} m",
         fmt_lap(cmp.reference.time_s),
-        fmt_lap(cmp.compare.as_ref().map_or(0.0, |c| c.time_s))
-    );
-    println!(
-        "Track length ≈ {:.0} m. Delta by tenth of the lap:",
+        fmt_lap(cmp.compare.as_ref().map_or(0.0, |c| c.time_s)),
         cmp.track_length_m
     );
-    let n = cmp.x.len() - 1;
-    let mut prev = 0.0;
-    for k in 1..=10 {
-        let i = n * k / 10;
-        let d = delta[i];
+    println!("Corner   apex  B vs A   min speed A/B    brake point B vs A   full throttle B vs A");
+    let opt = |v: Option<f32>| v.map_or("    -".to_string(), |v| format!("{v:5.1}"));
+    let diff = |p: [Option<f32>; 2], later: &str, earlier: &str| match p {
+        [Some(a), Some(b)] if (b - a).abs() >= 1.0 => {
+            format!(
+                "{:>4.0} m {}",
+                (b - a).abs(),
+                if b > a { later } else { earlier }
+            )
+        }
+        [Some(_), Some(_)] => "same".to_string(),
+        _ => "-".to_string(),
+    };
+    for c in &cmp.corners {
         println!(
-            "  {:>5.0} m  cumulative {:+.3} s  this segment {:+.3} s",
-            cmp.x[i],
-            d,
-            d - prev
+            "T{:<4} {:>5.0} m  {:>+6.3}   {} / {}    {:<20} {}",
+            c.number,
+            c.apex_m,
+            c.delta_s.unwrap_or(0.0),
+            opt(c.min_speed[0]),
+            opt(c.min_speed[1]),
+            diff(c.brake_m, "later", "earlier"),
+            diff(c.throttle_m, "later", "earlier"),
         );
-        prev = d;
     }
     Ok(())
+}
+
+fn import(root: &Path, file: &Path) -> Result<()> {
+    let bytes = std::fs::read(file).with_context(|| format!("reading {}", file.display()))?;
+    let replay = sm_sources::ac::replay::parse(&bytes)?;
+    if replay.car_count > 1 {
+        println!(
+            "Replay has {} cars; importing the first one.",
+            replay.car_count
+        );
+    }
+    let meta = sm_recorder::import_frames(
+        root,
+        &replay.info,
+        "Assetto Corsa replay",
+        &replay.channels,
+        &replay.frames,
+    )?;
+    println!(
+        "Imported {}: {} / {} / {}, {} frames at {:.0} Hz",
+        meta.id,
+        meta.info.track,
+        meta.info.car,
+        meta.info.driver,
+        meta.frames,
+        1.0 / replay.sample_interval_s
+    );
+    laps(root, &meta.id)
 }
 
 fn export(root: &Path, session: &str, lap: Option<u32>, out: &Path) -> Result<()> {

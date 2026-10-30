@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { open } from "@tauri-apps/plugin-dialog";
 import "uplot/dist/uPlot.min.css";
 import "./style.css";
 import { buildCharts, updateChartHeaders, COLOR_A, COLOR_B, type ChartSet } from "./charts";
@@ -119,10 +121,15 @@ async function selectSession(id: string, autoPick = true) {
     const best = valid.reduce<typeof valid[number] | null>((m, l) => (!m || l.time_s < m.time_s ? l : m), null);
     const pick = best ?? s.laps.find((l) => l.complete) ?? s.laps[0];
     if (pick) {
-      // Default view: best lap vs the most recent valid lap.
-      const latest = [...valid].reverse().find((l) => l !== best);
+      // Default view: best lap vs the most recent representative lap. Laps
+      // more than 3 % off the best are usually mistakes and would swamp the
+      // delta scale, so fall back to the second-best lap in that case.
+      const others = valid.filter((l) => l !== best);
+      const close = others.filter((l) => best && l.time_s <= best.time_s * 1.03);
+      const second = [...others].sort((x, y) => x.time_s - y.time_s)[0];
+      const b = close.length ? close[close.length - 1] : second;
       state.a = { session: id, lap: pick.number };
-      state.b = latest ? { session: id, lap: latest.number } : null;
+      state.b = b ? { session: id, lap: b.number } : null;
       await updateComparison();
     }
   }
@@ -195,6 +202,7 @@ async function updateComparison() {
   state.cursor = null;
   state.charts = buildCharts($("charts"), state.cmp, onCursor);
   renderSummary();
+  renderCorners();
   renderStats();
   onCursor(null);
 }
@@ -247,6 +255,60 @@ function renderSummary() {
   };
 }
 
+function renderCorners() {
+  const el = $("corners");
+  const cmp = state.cmp;
+  if (!cmp || !cmp.corners.length) {
+    el.innerHTML = "";
+    return;
+  }
+  const hasB = !!cmp.compare;
+  const worst = Math.max(0.05, ...cmp.corners.map((c) => Math.abs(c.delta_s ?? 0)));
+  const sp = (v: number | null) => (v == null ? "–" : v.toFixed(0));
+  // B relative to A along the lap: "+12 m" = B does it 12 m later.
+  const shift = (p: [number | null, number | null]) => {
+    const [a, b] = p;
+    if (a == null && b == null) return "";
+    if (a == null) return `<span class="dim">B only</span>`;
+    if (b == null) return `<span class="dim">A only</span>`;
+    const d = Math.round(b - a);
+    return d === 0 ? "same" : `${d > 0 ? "+" : "−"}${Math.abs(d)} m`;
+  };
+  const rows = cmp.corners
+    .map((c) => {
+      const d = c.delta_s ?? 0;
+      const w = (Math.abs(d) / worst) * 100;
+      const minDiff = c.min_speed[0] != null && c.min_speed[1] != null ? c.min_speed[1] - c.min_speed[0] : null;
+      return `<tr data-corner="${c.number}">
+        <td class="cn">T${c.number}</td>
+        <td class="num dim">${Math.round(c.apex_m)} m</td>
+        ${hasB ? `<td class="num ${d > 0.005 ? "loss" : d < -0.005 ? "gain" : ""}">${fmtDelta(d)}</td>
+        <td class="bar"><span class="${d > 0 ? "loss" : "gain"}" style="width:${w.toFixed(0)}%"></span></td>` : ""}
+        <td class="num">${sp(c.min_speed[0])}${hasB ? ` / ${sp(c.min_speed[1])}` : ""}</td>
+        ${hasB ? `<td class="num ${minDiff != null && minDiff < -2 ? "loss" : minDiff != null && minDiff > 2 ? "gain" : "dim"}">${minDiff == null ? "" : `${minDiff > 0 ? "+" : "−"}${Math.abs(minDiff).toFixed(1)}`}</td>
+        <td class="num">${shift(c.brake_m)}</td>
+        <td class="num">${shift(c.throttle_m)}</td>` : ""}
+      </tr>`;
+    })
+    .join("");
+  el.innerHTML = `<table class="corner-table">
+    <tr><th>Corner</th><th class="num">Apex</th>${hasB ? `<th class="num">B vs A</th><th></th>` : ""}
+      <th class="num">Min speed${hasB ? " A / B" : ""}</th>${hasB ? `<th class="num">Δ min</th><th class="num">Brake point B</th><th class="num">Full throttle B</th>` : ""}</tr>
+    ${rows}</table>`;
+}
+
+$("corners").addEventListener("click", (e) => {
+  const row = (e.target as HTMLElement).closest<HTMLElement>("tr[data-corner]");
+  const cmp = state.cmp;
+  if (!row || !cmp || !state.charts) return;
+  const c = cmp.corners.find((c) => c.number === Number(row.dataset.corner));
+  if (!c) return;
+  $("corners").querySelectorAll("tr.sel").forEach((r) => r.classList.remove("sel"));
+  row.classList.add("sel");
+  // Setting the scale on one plot propagates to the others via the sync hook.
+  state.charts.plots[0]?.setScale("x", { min: cmp.x[c.start], max: cmp.x[c.end] });
+});
+
 const READOUT: [string, string, number, number][] = [
   // label, channel, multiplier, digits
   ["Speed", "speed", 1, 1],
@@ -254,7 +316,7 @@ const READOUT: [string, string, number, number][] = [
   ["Brake %", "brake", 100, 0],
   ["Gear", "gear", 1, 0],
   ["RPM", "rpm", 1, 0],
-  ["Steer %", "steer", 100, 0],
+  ["Steer °", "steer_deg", 1, 0],
   ["Lat G", "g_lat", 1, 2],
   ["Long G", "g_long", 1, 2],
 ];
@@ -315,6 +377,34 @@ $("export-session").addEventListener("click", async () => {
 });
 
 $("refresh").addEventListener("click", () => loadSessions());
+
+// ---------- replay import ----------
+
+async function importReplay(path: string) {
+  toast(`Importing ${path.split(/[\\/]/).pop()}…`);
+  const meta = await call<Session>("import_replay", { path });
+  toast(`Imported ${meta.track}: ${meta.laps.filter(isValidLap).length} valid laps`);
+  state.a = null;
+  state.b = null;
+  await loadSessions();
+  await selectSession(meta.id);
+}
+
+$("import").addEventListener("click", async () => {
+  const path = await open({
+    multiple: false,
+    filters: [{ name: "Assetto Corsa replay", extensions: ["acreplay"] }],
+  });
+  if (typeof path === "string") await importReplay(path);
+});
+
+getCurrentWebview().onDragDropEvent(async ({ payload: p }) => {
+  $("drop").classList.toggle("show", p.type === "enter" || p.type === "over");
+  if (p.type !== "drop") return;
+  for (const path of p.paths.filter((x) => x.toLowerCase().endsWith(".acreplay"))) {
+    await importReplay(path);
+  }
+});
 
 // ---------- recorder ----------
 

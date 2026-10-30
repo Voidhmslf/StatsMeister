@@ -39,12 +39,26 @@ export interface LapSeries {
   channels: Record<string, number[]>;
 }
 
+export interface Corner {
+  number: number;
+  start: number;
+  apex: number;
+  end: number;
+  apex_m: number;
+  min_speed: [number | null, number | null];
+  brake_m: [number | null, number | null];
+  throttle_m: [number | null, number | null];
+  exit_speed: [number | null, number | null];
+  delta_s: number | null;
+}
+
 export interface Comparison {
   x: number[];
   track_length_m: number;
   reference: LapSeries;
   compare: LapSeries | null;
   delta: number[] | null;
+  corners: Corner[];
 }
 
 export interface LapStats {

@@ -11,6 +11,8 @@ pub const BRAKE: &str = "brake";
 pub const CLUTCH: &str = "clutch";
 /// Normalized steering input, -1..1 (negative = left)
 pub const STEER: &str = "steer";
+/// Steering wheel angle, degrees (negative = left)
+pub const STEER_DEG: &str = "steer_deg";
 /// -1 = reverse, 0 = neutral, 1.. = gears
 pub const GEAR: &str = "gear";
 pub const RPM: &str = "rpm";

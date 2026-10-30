@@ -1,5 +1,6 @@
 //! Assetto Corsa and Assetto Corsa Competizione via the `acpmf_*` shared memory pages.
 
+pub mod replay;
 mod structs;
 
 use sm_core::{ChannelDef, Poll, SessionInfo, SourceResult, TelemetrySource, ch};

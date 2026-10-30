@@ -104,6 +104,26 @@ export class TrackMap {
       }
     }
 
+    // Corner numbers next to each apex.
+    ctx.font = `600 ${10 * dpr}px system-ui`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const cx = w / 2, cy = h / 2;
+    for (const c of cmp.corners) {
+      const [x, y] = this.pts[c.apex] ?? [];
+      if (x == null) continue;
+      // Push the label away from the map centre so it sits outside the line.
+      const dx = x - cx, dy = y - cy;
+      const len = Math.hypot(dx, dy) || 1;
+      const lx = x + (dx / len) * 12 * dpr, ly = y + (dy / len) * 12 * dpr;
+      ctx.fillStyle = "#0d1014";
+      ctx.beginPath();
+      ctx.arc(lx, ly, 7 * dpr, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#cbd5e1";
+      ctx.fillText(String(c.number), lx, ly + 0.5 * dpr);
+    }
+
     // Start/finish marker.
     const [sx, sy] = this.pts[0];
     ctx.fillStyle = "#e5e7eb";

@@ -19,6 +19,7 @@ const COMPARE_CHANNELS: &[&str] = &[
     ch::THROTTLE,
     ch::BRAKE,
     ch::STEER,
+    ch::STEER_DEG,
     ch::GEAR,
     ch::RPM,
     ch::G_LAT,
@@ -167,6 +168,21 @@ async fn export_csv(
     Ok(path.display().to_string())
 }
 
+/// Imports an Assetto Corsa replay file and returns the new session.
+#[tauri::command]
+async fn import_replay(state: State<'_, AppState>, path: String) -> Result<SessionMeta, String> {
+    let bytes = std::fs::read(&path).map_err(|e| format!("reading {path}: {e}"))?;
+    let replay = sm_sources::ac::replay::parse(&bytes).map_err(err)?;
+    sm_recorder::import_frames(
+        &state.data_dir,
+        &replay.info,
+        "Assetto Corsa replay",
+        &replay.channels,
+        &replay.frames,
+    )
+    .map_err(err)
+}
+
 #[tauri::command]
 fn recorder_status(state: State<'_, AppState>) -> RecorderStatus {
     let rec = state.recording.lock().unwrap();
@@ -235,6 +251,7 @@ pub fn run() {
         recording: Mutex::new(None),
     };
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             data_dir,
@@ -243,6 +260,7 @@ pub fn run() {
             lap_stats,
             compare_laps,
             export_csv,
+            import_replay,
             recorder_status,
             start_recording,
             stop_recording,

@@ -4,6 +4,7 @@
 //! Laps are aligned on *track position* (0..1 along the lap) rather than
 //! time, so the same corner lines up across laps of different pace.
 
+pub mod corners;
 pub mod stats;
 
 use serde::Serialize;
@@ -21,6 +22,8 @@ pub struct LapTrace<'a> {
     pub dist: Vec<f64>,
     /// Monotonic position along the lap, nominally 0..1.
     pub pct: Vec<f64>,
+    /// `pct` comes from the game rather than from integrated distance.
+    pub game_pct: bool,
 }
 
 impl<'a> LapTrace<'a> {
@@ -43,7 +46,8 @@ impl<'a> LapTrace<'a> {
             dist.resize(t.len(), 0.0);
         }
 
-        let pct = match data.channel(ch::LAP_DIST_PCT) {
+        let game_pct = data.channel(ch::LAP_DIST_PCT);
+        let pct = match game_pct {
             Some(raw) => unwrap_pct(&raw[r]),
             None => {
                 let total = dist.last().copied().unwrap_or(0.0).max(1.0);
@@ -56,6 +60,7 @@ impl<'a> LapTrace<'a> {
             t,
             dist,
             pct,
+            game_pct: game_pct.is_some(),
         }
     }
 
@@ -81,6 +86,64 @@ impl<'a> LapTrace<'a> {
         let covered = (p1 - p0).max(1e-3);
         self.dist.last().copied().unwrap_or(0.0) / covered
     }
+}
+
+/// Track position of every sample of `other`, expressed on `reference`'s
+/// 0..1 scale, found by projecting world positions onto the reference
+/// lap's driven line. Needed when the game gives no lap position (replays):
+/// normalizing each lap by its own distance misaligns laps whose lines
+/// differ in length.
+pub fn project_onto(reference: &LapTrace, other: &LapTrace) -> Option<Vec<f64>> {
+    let xy = |t: &LapTrace| -> Option<Vec<(f64, f64)>> {
+        let x = t.channel(ch::POS_X)?;
+        let z = t.channel(ch::POS_Z)?;
+        Some(
+            x.iter()
+                .zip(z)
+                .map(|(&x, &z)| (x as f64, z as f64))
+                .collect(),
+        )
+    };
+    let rp = xy(reference)?;
+    let op = xy(other)?;
+    if rp.len() < 2 || op.is_empty() {
+        return None;
+    }
+    let m = rp.len() - 1; // number of segments
+
+    // Distance² from q to segment j and the projection parameter along it.
+    let seg = |j: usize, q: (f64, f64)| -> (f64, f64) {
+        let (a, b) = (rp[j], rp[j + 1]);
+        let (dx, dz) = (b.0 - a.0, b.1 - a.1);
+        let len2 = dx * dx + dz * dz;
+        let u = if len2 > 0.0 {
+            (((q.0 - a.0) * dx + (q.1 - a.1) * dz) / len2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let (px, pz) = (a.0 + u * dx, a.1 + u * dz);
+        ((q.0 - px).powi(2) + (q.1 - pz).powi(2), u)
+    };
+    let best_in = |range: std::ops::Range<usize>, q| {
+        range
+            .map(|j| (j, seg(j, q)))
+            .min_by(|a, b| a.1.0.total_cmp(&b.1.0))
+            .map(|(j, (_, u))| (j, u))
+            .expect("non-empty range")
+    };
+
+    let mut out = Vec::with_capacity(op.len());
+    // The lap starts near the line, so look for the first match early in the reference.
+    let (mut j, mut u) = best_in(0..m.div_ceil(5), op[0]);
+    for (i, &q) in op.iter().enumerate() {
+        if i > 0 {
+            // Both laps are sampled similarly, so the match only moves forward a little.
+            (j, u) = best_in(j.saturating_sub(5)..(j + 150).min(m), q);
+        }
+        let p = reference.pct[j] + u * (reference.pct[j + 1] - reference.pct[j]);
+        out.push(out.last().map_or(p, |&last: &f64| last.max(p)));
+    }
+    Some(out)
 }
 
 /// Makes the game's 0..1 lap position continuous across the start/finish
@@ -153,6 +216,7 @@ pub struct LapComparison {
     pub compare: Option<LapSeries>,
     /// `compare` elapsed time minus `reference` elapsed time; positive = compare lap is slower.
     pub delta: Option<Vec<f32>>,
+    pub corners: Vec<corners::Corner>,
 }
 
 /// Resamples one or two laps onto a common distance grid of roughly `step_m` metres.
@@ -166,19 +230,19 @@ pub fn compare_laps(
     let n = ((length / step_m.max(0.1)) as usize).clamp(200, 20_000);
     let grid: Vec<f64> = (0..=n).map(|i| i as f64 / n as f64).collect();
 
-    let series = |trace: &LapTrace| -> LapSeries {
+    let series = |trace: &LapTrace, pct: &[f64]| -> LapSeries {
         let channels = channels
             .iter()
             .filter_map(|&name| {
                 let y = trace.channel(name)?;
-                let v = interp(&trace.pct, y, &grid);
+                let v = interp(pct, y, &grid);
                 Some((name.to_owned(), v.into_iter().map(|v| v as f32).collect()))
             })
             .collect();
         LapSeries {
             lap: trace.lap.number,
             time_s: trace.lap.time_s,
-            elapsed: interp(&trace.pct, &trace.t, &grid)
+            elapsed: interp(pct, &trace.t, &grid)
                 .into_iter()
                 .map(|v| v as f32)
                 .collect(),
@@ -186,8 +250,13 @@ pub fn compare_laps(
         }
     };
 
-    let reference_series = series(reference);
-    let compare_series = compare.map(series);
+    let reference_series = series(reference, &reference.pct);
+    let compare_series = compare.map(|c| {
+        let projected = (!reference.game_pct || !c.game_pct)
+            .then(|| project_onto(reference, c))
+            .flatten();
+        series(c, projected.as_deref().unwrap_or(&c.pct))
+    });
     let delta = compare_series.as_ref().map(|c| {
         c.elapsed
             .iter()
@@ -195,13 +264,16 @@ pub fn compare_laps(
             .map(|(b, a)| b - a)
             .collect()
     });
-    LapComparison {
+    let mut cmp = LapComparison {
         x: grid.iter().map(|p| (p * length) as f32).collect(),
         track_length_m: length,
         reference: reference_series,
         compare: compare_series,
         delta,
-    }
+        corners: Vec::new(),
+    };
+    cmp.corners = corners::find_corners(&cmp);
+    cmp
 }
 
 #[cfg(test)]
