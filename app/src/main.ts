@@ -5,7 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import "uplot/dist/uPlot.min.css";
 import "./style.css";
 import { buildCharts, updateChartHeaders, COLOR_A, COLOR_B, type ChartSet } from "./charts";
-import { esc, fmtDate, fmtDelta, fmtLap } from "./format";
+import { esc, fmtDate, fmtDay, fmtDelta, fmtLap, prettyName } from "./format";
 import { applyStatic, getLang, isKey, lapsCount, setLang, t, type Lang } from "./i18n";
 import { renderProgress } from "./progress";
 import { TrackMap } from "./trackmap";
@@ -14,6 +14,7 @@ import {
   type ComboProgress,
   type Comparison,
   type Hint,
+  type Lap,
   type LapRef,
   type LapStats,
   type Potential,
@@ -21,26 +22,33 @@ import {
   type Session,
 } from "./types";
 
+type View = "review" | "telemetry" | "progress";
+
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const state = {
   sessions: [] as Session[],
   current: null as Session | null,
+  /** Reference lap (the faster one) and the lap compared against it. */
   a: null as LapRef | null,
   b: null as LapRef | null,
   cmp: null as Comparison | null,
   stats: new Map<string, LapStats[]>(),
   potential: new Map<string, Potential | null>(),
-  charts: null as ChartSet | null,
-  cursor: null as number | null,
-  recording: false,
-  view: "analysis" as "analysis" | "progress",
   progress: null as ComboProgress | null,
+  view: "review" as View,
+  openCorner: null as number | null,
+  charts: null as ChartSet | null,
+  mini: null as ChartSet | null,
+  recording: false,
   /** Re-evaluated on language change so the status line follows it. */
-  status: () => t("rec.idle"),
+  status: () => "",
 };
 
-const map = new TrackMap($<HTMLCanvasElement>("map"));
+const reviewMap = new TrackMap($<HTMLCanvasElement>("review-map"));
+const teleMap = new TrackMap($<HTMLCanvasElement>("tele-map"));
+
+// ---------- helpers ----------
 
 let toastTimer = 0;
 function toast(msg: string, kind: "info" | "error" = "info") {
@@ -65,227 +73,228 @@ const sameRef = (x: LapRef | null, y: LapRef | null) =>
 
 const sessionById = (id: string) => state.sessions.find((s) => s.id === id);
 
+function lapOf(r: LapRef | null): Lap | undefined {
+  return r ? sessionById(r.session)?.laps.find((l) => l.number === r.lap) : undefined;
+}
+
+function bestLap(s: Session): Lap | undefined {
+  return s.laps.filter(isValidLap).reduce<Lap | undefined>((m, l) => (!m || l.time_s < m.time_s ? l : m), undefined);
+}
+
+/** "Lap 5", or "personal best, 12 Oct" for a lap from another session. */
+function lapName(r: LapRef): string {
+  if (state.current && r.session !== state.current.id) {
+    const s = sessionById(r.session);
+    return t("lap.pbFrom", { date: s ? fmtDay(s.started_at) : "" });
+  }
+  const best = state.current && bestLap(state.current);
+  return best && r.lap === best.number ? t("lap.best", { n: r.lap }) : t("lap.n", { n: r.lap });
+}
+
 function setStatus(fn: () => string) {
   state.status = fn;
   $("rec-status").textContent = fn();
+  $("rec-status").hidden = !fn();
 }
 
-// ---------- sessions ----------
+// ---------- sessions sidebar ----------
 
 async function loadSessions() {
   state.sessions = await call<Session[]>("list_sessions");
-  renderSessions();
+  renderSidebar();
   const keep = state.current && sessionById(state.current.id);
-  if (keep) selectSession(keep.id, false);
-  else if (state.sessions.find((s) => s.finished)) selectSession(state.sessions.find((s) => s.finished)!.id);
-  else renderLaps();
+  if (keep) {
+    state.current = keep;
+    renderSession();
+  } else {
+    const first = state.sessions.find((s) => s.finished) ?? state.sessions[0];
+    if (first) await selectSession(first.id);
+    else showWelcome();
+  }
 }
 
-function renderSessions() {
-  const ul = $("sessions");
+function renderSidebar() {
+  const nav = $("sessions");
   if (!state.sessions.length) {
-    ul.innerHTML = `<li class="muted">${t("sessions.empty")}</li>`;
+    nav.innerHTML = `<p class="side-empty">${t("sessions.empty")}</p>`;
     return;
   }
-  ul.innerHTML = state.sessions
+  let lastDay = "";
+  nav.innerHTML = state.sessions
     .map((s) => {
-      const best = s.laps.filter(isValidLap).reduce((m, l) => Math.min(m, l.time_s), Infinity);
-      const laps = s.laps.filter((l) => l.complete).length;
-      return `<li class="session ${state.current?.id === s.id ? "active" : ""}" data-id="${esc(s.id)}">
-        <div class="s-top"><span class="s-track">${esc(s.track || t("sessions.unknownTrack"))}</span>
-          ${s.finished ? `<span class="s-best">${fmtLap(best)}</span>` : `<span class="badge live">${t("sessions.rec")}</span>`}</div>
-        <div class="s-car">${esc(s.car || t("sessions.unknownCar"))}</div>
-        <div class="s-meta">${esc(s.game)} · ${fmtDate(s.started_at)} · ${lapsCount(laps)}</div>
-      </li>`;
+      const day = fmtDay(s.started_at, true);
+      const header = day !== lastDay ? `<div class="day">${esc(day)}</div>` : "";
+      lastDay = day;
+      const best = bestLap(s);
+      return `${header}<button class="session ${state.current?.id === s.id ? "on" : ""}" data-id="${esc(s.id)}">
+        <span class="s-track">${esc(prettyName(s.track) || t("sessions.unknownTrack"))}</span>
+        <span class="s-time">${s.finished ? (best ? fmtLap(best.time_s) : "–") : t("sessions.live")}</span>
+        <span class="s-car">${esc(prettyName(s.car) || t("sessions.unknownCar"))}</span>
+      </button>`;
     })
     .join("");
 }
 
 $("sessions").addEventListener("click", (e) => {
-  const li = (e.target as HTMLElement).closest<HTMLElement>(".session");
-  if (li?.dataset.id) selectSession(li.dataset.id);
+  const b = (e.target as HTMLElement).closest<HTMLElement>(".session");
+  if (b?.dataset.id) selectSession(b.dataset.id);
 });
 
-async function selectSession(id: string, autoPick = true) {
+function showWelcome() {
+  state.current = null;
+  $("welcome").hidden = false;
+  $("session").hidden = true;
+}
+
+async function selectSession(id: string) {
   const s = sessionById(id);
   if (!s) return;
   state.current = s;
-  renderSessions();
-  renderLaps();
-  $<HTMLButtonElement>("export-session").disabled = !s.finished;
-  if (!s.finished) return;
-  if (!state.stats.has(id)) {
-    state.stats.set(id, await call<LapStats[]>("lap_stats", { session: id }));
-  }
-  if (!state.potential.has(id)) {
-    state.potential.set(id, await call<Potential | null>("session_potential", { session: id }));
-  }
-  renderPotential();
-  if (state.view === "progress") await loadProgress();
-  // Keep an existing A selection so laps from different sessions can be compared.
-  if (autoPick && !state.a) {
-    const valid = s.laps.filter(isValidLap);
-    const best = valid.reduce<typeof valid[number] | null>((m, l) => (!m || l.time_s < m.time_s ? l : m), null);
-    const pick = best ?? s.laps.find((l) => l.complete) ?? s.laps[0];
-    if (pick) {
-      // Default view: best lap vs the most recent representative lap. Laps
-      // more than 3 % off the best are usually mistakes and would swamp the
-      // delta scale, so fall back to the second-best lap in that case.
-      const others = valid.filter((l) => l !== best);
-      const close = others.filter((l) => best && l.time_s <= best.time_s * 1.03);
-      const second = [...others].sort((x, y) => x.time_s - y.time_s)[0];
-      const b = close.length ? close[close.length - 1] : second;
-      state.a = { session: id, lap: pick.number };
-      state.b = b ? { session: id, lap: b.number } : null;
-      await updateComparison();
-    }
-  }
-  renderLaps();
-}
-
-// ---------- laps ----------
-
-function renderLaps() {
-  const s = state.current;
-  const table = $("laps");
-  $("laps-title").textContent = s ? t("laps.titleTrack", { track: s.track }) : t("laps.title");
-  if (!s) {
-    table.innerHTML = "";
-    return;
-  }
-  if (!s.finished) {
-    table.innerHTML = `<tr><td class="muted">${t("laps.recording")}</td></tr>`;
-    return;
-  }
-  const best = s.laps.filter(isValidLap).reduce((m, l) => Math.min(m, l.time_s), Infinity);
-  table.innerHTML =
-    `<tr><th>#</th><th>${t("laps.time")}</th><th>${t("laps.deltaBest")}</th><th></th><th></th></tr>` +
-    s.laps
-      .map((l) => {
-        const ref = { session: s.id, lap: l.number };
-        const flags = [!l.complete && t("laps.partial"), l.in_pit && t("laps.pit"), l.cut && t("laps.cut")]
-          .filter(Boolean)
-          .join(" ");
-        const isBest = isValidLap(l) && l.time_s === best;
-        const d = isValidLap(l) && Number.isFinite(best) ? fmtDelta(l.time_s - best) : "";
-        return `<tr class="lap ${isValidLap(l) ? "" : "invalid"} ${isBest ? "best" : ""}" data-lap="${l.number}">
-          <td>${l.number}</td>
-          <td class="num">${fmtLap(l.time_s)}</td>
-          <td class="num dim">${isBest ? t("laps.best") : d}</td>
-          <td class="flags">${flags}</td>
-          <td class="pick">
-            <button class="ab a ${sameRef(state.a, ref) ? "on" : ""}" data-slot="a">A</button>
-            <button class="ab b ${sameRef(state.b, ref) ? "on" : ""}" data-slot="b">B</button>
-          </td></tr>`;
-      })
-      .join("");
-}
-
-$("laps").addEventListener("click", (e) => {
-  const target = e.target as HTMLElement;
-  const row = target.closest<HTMLElement>(".lap");
-  if (!row || !state.current) return;
-  const ref = { session: state.current.id, lap: Number(row.dataset.lap) };
-  const slot = target.closest<HTMLElement>(".ab")?.dataset.slot ?? "a";
-  if (slot === "b") {
-    state.b = sameRef(state.b, ref) ? null : ref;
+  state.openCorner = null;
+  $("welcome").hidden = true;
+  $("session").hidden = false;
+  renderSidebar();
+  state.cmp = null;
+  state.progress = null;
+  const best = bestLap(s);
+  if (s.finished && best) {
+    state.a = { session: id, lap: best.number };
+    state.b = defaultCompare(s, best);
+    const [stats, potential, progress] = await Promise.all([
+      state.stats.get(id) ?? call<LapStats[]>("lap_stats", { session: id }),
+      state.potential.has(id) ? state.potential.get(id)! : call<Potential | null>("session_potential", { session: id }),
+      call<ComboProgress>("combo_progress", { session: id }),
+    ]);
+    if (state.current?.id !== id) return; // another session was picked meanwhile
+    state.stats.set(id, stats);
+    state.potential.set(id, potential);
+    state.progress = progress;
+    await updateComparison();
   } else {
-    state.a = ref;
-    if (sameRef(state.a, state.b)) state.b = null;
+    state.a = null;
+    state.b = null;
+    renderSession();
   }
-  renderLaps();
-  updateComparison();
-});
+}
 
-// ---------- comparison ----------
+/**
+ * The lap to compare with the best one: the latest lap within 3 % of it
+ * (a representative recent lap), else the second best. Slower laps are
+ * usually mistakes and would hide the real, repeatable losses.
+ */
+function defaultCompare(s: Session, best: Lap): LapRef | null {
+  const others = s.laps.filter((l) => isValidLap(l) && l !== best);
+  const close = others.filter((l) => l.time_s <= best.time_s * 1.03);
+  const pick = close.length ? close[close.length - 1] : [...others].sort((x, y) => x.time_s - y.time_s)[0];
+  return pick ? { session: s.id, lap: pick.number } : null;
+}
 
 async function updateComparison() {
   if (!state.a) return;
-  state.cmp = await call<Comparison>("compare_laps", { reference: state.a, compare: state.b });
+  const cmp = await call<Comparison>("compare_laps", { reference: state.a, compare: state.b });
   for (const r of [state.a, state.b]) {
     if (r && !state.stats.has(r.session)) {
       state.stats.set(r.session, await call<LapStats[]>("lap_stats", { session: r.session }));
     }
   }
-  renderComparison();
+  state.cmp = cmp;
+  renderSession();
 }
 
-/** Redraws everything that depends on the current comparison (no refetch). */
-function renderComparison() {
-  if (!state.cmp) return;
-  state.charts?.destroy();
-  state.cursor = null;
-  lastCursor = undefined;
-  state.charts = buildCharts($("charts"), state.cmp, onCursor);
-  renderSummary();
-  renderCoach();
-  renderCorners();
-  renderStats();
-  map.render(null, null);
-  onCursor(null);
+// ---------- session view ----------
+
+function renderSession() {
+  const s = state.current;
+  if (!s) return;
+  const best = bestLap(s);
+  $("s-title").textContent = prettyName(s.track) || t("sessions.unknownTrack");
+  $("s-meta").textContent = [prettyName(s.car), fmtDate(s.started_at), lapsCount(s.laps.filter(isValidLap).length)]
+    .filter(Boolean)
+    .join(" · ");
+  $("s-best").innerHTML = best ? `<span>${t("session.best")}</span><b class="t-best">${fmtLap(best.time_s)}</b>` : "";
+  $<HTMLButtonElement>("tab-telemetry").disabled = !state.cmp;
+  $<HTMLButtonElement>("tab-progress").disabled = !s.finished;
+  if (!state.cmp && state.view !== "review") state.view = "review";
+  document.querySelectorAll<HTMLElement>(".tab").forEach((b) => {
+    const on = b.dataset.view === state.view;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-selected", String(on));
+  });
+  for (const v of ["review", "telemetry", "progress"] as View[]) $(`view-${v}`).hidden = state.view !== v;
+  if (state.view === "review") renderReview();
+  if (state.view === "telemetry") renderTelemetry();
+  if (state.view === "progress") renderProgressView();
 }
 
-let lastCursor: number | null | undefined;
-function onCursor(idx: number | null) {
-  if (idx === lastCursor) return;
-  lastCursor = idx;
-  state.cursor = idx;
-  if (!state.cmp) return;
-  map.render(state.cmp, idx);
-  updateChartHeaders($("charts"), state.cmp, idx);
-  renderReadout(idx);
-}
+document.querySelectorAll<HTMLElement>(".tab").forEach((b) =>
+  b.addEventListener("click", () => {
+    state.view = b.dataset.view as View;
+    renderSession();
+  }),
+);
 
-function lapLabel(r: LapRef) {
-  const s = sessionById(r.session);
-  const lap = s?.laps.find((l) => l.number === r.lap);
-  return { s, lap };
-}
+// ---------- review ----------
 
-function zoomToCorner(number: number) {
-  const cmp = state.cmp;
-  const c = cmp?.corners.find((c) => c.number === number);
-  if (!cmp || !c || !state.charts) return;
-  $("corners").querySelectorAll("tr.sel").forEach((r) => r.classList.remove("sel"));
-  $("corners").querySelector(`tr[data-corner="${number}"]`)?.classList.add("sel");
-  // Setting the scale on one plot propagates to the others via the sync hook.
-  state.charts.plots[0]?.setScale("x", { min: cmp.x[c.start], max: cmp.x[c.end] });
-}
+function renderReview() {
+  const s = state.current!;
+  const root = $("review-body");
+  state.mini?.destroy();
+  state.mini = null;
+  const best = bestLap(s);
 
-function renderSummary() {
-  const el = $("summary");
-  if (!state.a || !state.cmp) {
-    el.innerHTML = "";
+  if (!s.finished) {
+    root.innerHTML = `<p class="lead">${t("review.recording")}</p>`;
+    reviewMap.render(null, null);
     return;
   }
-  const chip = (r: LapRef, cls: string, color: string) => {
-    const { s, lap } = lapLabel(r);
-    return `<div class="chip ${cls}" style="--c:${color}">
-      <span class="chip-tag">${cls.toUpperCase()}</span>
-      <span class="chip-time">${fmtLap(lap?.time_s ?? 0)}</span>
-      <span class="chip-sub">${t("summary.lap", { n: r.lap })} · ${esc(s?.car ?? "")}<br>${esc(s ? fmtDate(s.started_at) : "")}</span>
-    </div>`;
-  };
-  let html = chip(state.a, "a", COLOR_A);
-  if (state.b) {
-    html += chip(state.b, "b", COLOR_B);
-    // Use the recorded lap times; the delta trace is integrated from samples and can be a few ms off.
-    const total = (lapLabel(state.b).lap?.time_s ?? 0) - (lapLabel(state.a).lap?.time_s ?? 0);
-    html += `<div class="gap ${total > 0 ? "loss" : "gain"}"><span>${t("summary.gap")}</span><b>${fmtDelta(total)} ${t("unit.s")}</b></div>`;
-  } else {
-    html += `<div class="hint">${t("summary.pickB")}</div>`;
+  if (!best || !state.cmp) {
+    root.innerHTML = `<p class="lead">${t("review.noValid")}</p>${lapsTable(s)}`;
+    reviewMap.render(null, null);
+    return;
   }
-  html += `<div class="summary-actions"><button id="export-lap" class="btn btn-ghost">${t("summary.exportLap")}</button></div>`;
-  el.innerHTML = html;
-  $("export-lap").onclick = async () => {
-    const path = await call<string>("export_csv", { session: state.a!.session, lap: state.a!.lap });
-    toast(t("toast.exported", { path }));
-  };
+
+  const p = state.potential.get(s.id);
+  let lead = t("review.lead", { time: fmtLap(best.time_s), n: best.number });
+  if (p && p.reference_time_s - p.theoretical_best_s >= 0.05) {
+    lead += " " + t("review.potential", {
+      time: fmtLap(p.theoretical_best_s),
+      gain: (p.reference_time_s - p.theoretical_best_s).toFixed(2),
+    });
+  }
+  const pb = state.progress?.personal_best;
+  if (pb && pb[0] !== s.id && pb[1] < best.time_s) {
+    const pbSession = sessionById(pb[0]);
+    lead += " " + t("review.pb", { time: fmtLap(pb[1]), gap: (best.time_s - pb[1]).toFixed(2), date: pbSession ? fmtDay(pbSession.started_at) : "" });
+  } else if (pb && pb[0] === s.id && (state.progress?.sessions.length ?? 0) > 1) {
+    lead += " " + t("review.newPb");
+  }
+
+  root.innerHTML = `
+    <p class="lead">${lead}</p>
+    <section class="block">
+      <div class="block-head">
+        <h2>${t("review.lossTitle")}</h2>
+        ${compareSelect("review-compare")}
+      </div>
+      ${lossList()}
+    </section>
+    <section class="block">
+      <h2>${t("review.lapsTitle")}</h2>
+      ${lapsTable(s)}
+    </section>`;
+
+  const focus = topLosses().map(([c]) => c);
+  reviewMap.render(state.cmp, null, { mode: "focus", focus, active: state.openCorner });
+  if (state.openCorner != null) openCornerDetail(state.openCorner);
 }
 
-// ---------- coach ----------
+/** Corners where the compared lap loses most, with their hints (max 4). */
+function topLosses(): [number, Hint[]][] {
+  const byCorner = new Map<number, Hint[]>();
+  for (const h of state.cmp?.hints ?? []) byCorner.set(h.corner, [...(byCorner.get(h.corner) ?? []), h]);
+  return [...byCorner.entries()].slice(0, 4);
+}
 
-/** Hint numbers rounded for reading: metres and km/h without false precision. */
 function hintText(h: Hint): string {
   const key = `hint.${h.kind}`;
   if (!isKey(key)) return h.kind;
@@ -298,84 +307,199 @@ function hintText(h: Hint): string {
   return t(key, params);
 }
 
-function renderCoach() {
-  const el = $("coach");
-  const cmp = state.cmp;
-  if (!cmp?.compare) {
-    el.innerHTML = "";
-    return;
-  }
-  // One card per corner, biggest loss first; hints arrive sorted that way.
-  const byCorner = new Map<number, Hint[]>();
-  for (const h of cmp.hints) byCorner.set(h.corner, [...(byCorner.get(h.corner) ?? []), h]);
-  const cards = [...byCorner.entries()]
-    .slice(0, 4)
+function lossList(): string {
+  if (!state.b) return `<p class="muted">${t("review.single")}</p>`;
+  const losses = topLosses();
+  if (!losses.length) return `<p class="muted">${t("review.lossNone", { lap: lapName(state.b) })}</p>`;
+  const rest = (state.cmp?.corners ?? []).filter(
+    (c) => (c.delta_s ?? 0) >= 0.05 && !losses.some(([n]) => n === c.number),
+  ).length;
+  return `<ol class="losses">${losses
     .map(
-      ([corner, hints]) => `<div class="coach-card" data-corner="${corner}">
-        <div class="coach-head"><b>T${corner}</b><span class="loss">${t("coach.lost", { s: hints[0].loss_s.toFixed(3) })}</span></div>
+      ([corner, hints]) => `<li class="${state.openCorner === corner ? "open" : ""}" data-corner="${corner}">
+        <button class="loss-head" aria-expanded="${state.openCorner === corner}">
+          <span class="loss-corner">${t("review.corner", { n: corner })}</span>
+          <span class="loss-time">${t("review.lost", { s: hints[0].loss_s.toFixed(2) })}</span>
+          <span class="loss-toggle">${state.openCorner === corner ? t("review.hide") : t("review.show")}</span>
+        </button>
         ${hints.map((h) => `<p>${hintText(h)}</p>`).join("")}
-      </div>`,
+        <div class="loss-detail"></div>
+      </li>`,
     )
-    .join("");
-  el.innerHTML = `<div class="coach-title"><h2>${t("coach.title")}</h2><span class="muted">${t("coach.sub")}</span></div>
-    ${cards ? `<div class="coach-cards">${cards}</div>` : `<div class="muted">${t("coach.noLoss")}</div>`}`;
+    .join("")}</ol>${rest ? `<p class="muted small">${t("review.more", { n: rest })}</p>` : ""}`;
 }
 
-$("coach").addEventListener("click", (e) => {
-  const card = (e.target as HTMLElement).closest<HTMLElement>(".coach-card");
-  if (card) zoomToCorner(Number(card.dataset.corner));
+function openCornerDetail(corner: number) {
+  const cmp = state.cmp;
+  const li = $("review-body").querySelector<HTMLElement>(`li[data-corner="${corner}"]`);
+  const c = cmp?.corners.find((c) => c.number === corner);
+  const el = li?.querySelector<HTMLElement>(".loss-detail");
+  if (!cmp || !c || !el) return;
+  state.mini?.destroy();
+  el.innerHTML = `<div class="legend">${legend()}</div><div class="mini"></div>`;
+  // Braking zone, apex and exit; the rest of the following straight only squeezes the corner.
+  const apexM = cmp.x[c.apex];
+  const fromM = cmp.x[c.start];
+  const toM = Math.min(cmp.x[c.end], apexM + Math.max(150, apexM - fromM));
+  state.mini = buildCharts(el.querySelector<HTMLElement>(".mini")!, cmp, () => {}, {
+    keys: ["speed", "throttle", "brake"],
+    range: [fromM, toM],
+    compact: true,
+    syncKey: "review",
+  });
+}
+
+$("review-body").addEventListener("click", (e) => {
+  const target = e.target as HTMLElement;
+  const head = target.closest<HTMLElement>(".loss-head");
+  if (head) {
+    const n = Number(head.closest<HTMLElement>("li")!.dataset.corner);
+    state.openCorner = state.openCorner === n ? null : n;
+    renderReview();
+    return;
+  }
+  const row = target.closest<HTMLElement>("tr[data-lap]");
+  if (row && state.current) {
+    const lap = Number(row.dataset.lap);
+    const best = bestLap(state.current);
+    if (!best || lap === best.number || !isValidLap(lapOf({ session: state.current.id, lap })!)) return;
+    state.a = { session: state.current.id, lap: best.number };
+    state.b = { session: state.current.id, lap };
+    state.openCorner = null;
+    updateComparison();
+  }
 });
 
-// ---------- potential ----------
+$("review-body").addEventListener("change", (e) => {
+  const sel = e.target as HTMLSelectElement;
+  if (sel.id === "review-compare") applyComparePick(sel.value);
+});
 
-function renderPotential() {
-  const panel = $("potential-panel");
+/** Comparison options: best lap vs each other valid lap, and the personal best vs today's best. */
+function compareOptions(): { value: string; label: string; a: LapRef; b: LapRef }[] {
   const s = state.current;
-  const p = s ? state.potential.get(s.id) : null;
-  panel.hidden = !p;
-  if (!s || !p) return;
-  const gain = p.reference_time_s - p.theoretical_best_s;
-  const worstSpread = Math.max(0.05, ...p.segments.map((x) => x.stdev_s));
-  // Biggest reserves first: that is where practice pays off.
-  const rows = [...p.segments]
-    .sort((x, y) => y.reference_s - y.best_s - (x.reference_s - x.best_s))
-    .map((seg) => {
-      const g = Math.max(0, seg.reference_s - seg.best_s);
-      return `<tr data-corner="${seg.corner}" data-lap="${seg.best_lap}" title="${t("potential.rowTitle", { a: p.reference_lap, b: seg.best_lap, c: seg.corner })}">
-        <td class="cn">T${seg.corner}</td>
-        <td class="num ${g > 0.0005 ? "gain" : "dim"}">${g > 0.0005 ? `−${g.toFixed(3)}` : "—"}</td>
-        <td class="num dim">${g > 0.0005 ? t("potential.lap", { n: seg.best_lap }) : ""}</td>
-        <td class="spread"><span style="width:${((seg.stdev_s / worstSpread) * 100).toFixed(0)}%"></span></td>
-        <td class="num dim">±${seg.stdev_s.toFixed(2)}</td>
+  const best = s && bestLap(s);
+  if (!s || !best) return [];
+  const a = { session: s.id, lap: best.number };
+  const opts = s.laps
+    .filter((l) => isValidLap(l) && l !== best)
+    .map((l) => ({
+      value: `${s.id}|${l.number}`,
+      label: t("compare.vsLap", { n: l.number, time: fmtLap(l.time_s) }),
+      a,
+      b: { session: s.id, lap: l.number },
+    }));
+  const pb = state.progress?.personal_best;
+  const pbSummary = pb && state.progress?.sessions.find((x) => x.id === pb[0]);
+  if (pb && pbSummary?.best_lap != null && pb[0] !== s.id) {
+    opts.unshift({
+      value: `pb|${pb[0]}|${pbSummary.best_lap}`,
+      label: t("compare.vsPb", { time: fmtLap(pb[1]), date: fmtDay(pbSummary.started_at) }),
+      a: { session: pb[0], lap: pbSummary.best_lap },
+      b: a,
+    });
+  }
+  return opts;
+}
+
+function compareSelect(id: string): string {
+  const opts = compareOptions();
+  if (!opts.length) return "";
+  const current = opts.find((o) => sameRef(o.a, state.a) && sameRef(o.b, state.b))?.value;
+  return `<label class="field field-inline"><span>${t("compare.label")}</span><select id="${id}">${opts
+    .map((o) => `<option value="${esc(o.value)}" ${o.value === current ? "selected" : ""}>${esc(o.label)}</option>`)
+    .join("")}</select></label>`;
+}
+
+function applyComparePick(value: string) {
+  const o = compareOptions().find((o) => o.value === value);
+  if (!o) return;
+  state.a = o.a;
+  state.b = o.b;
+  state.openCorner = null;
+  updateComparison();
+}
+
+function legend(): string {
+  return `<span style="--c:${COLOR_A}">${esc(state.a ? lapName(state.a) : "")}</span>${
+    state.b ? `<span style="--c:${COLOR_B}">${esc(lapName(state.b))}</span>` : ""
+  }`;
+}
+
+function lapsTable(s: Session): string {
+  const valid = s.laps.filter(isValidLap);
+  const best = bestLap(s);
+  // Bars show the gap to the best lap; cap the scale so one slow lap doesn't flatten the rest.
+  const worst = Math.min(
+    best ? best.time_s * 1.05 : 0,
+    Math.max(...valid.map((l) => l.time_s), best?.time_s ?? 0),
+  );
+  const span = best ? Math.max(0.2, worst - best.time_s) : 1;
+  const rows = s.laps
+    .filter((l) => l.complete || l.time_s > 5)
+    .map((l) => {
+      const ok = isValidLap(l);
+      const isBest = l === best;
+      const compared = state.b && state.b.session === s.id && state.b.lap === l.number;
+      const why = [!l.complete && t("laps.partial"), l.in_pit && t("laps.pit"), l.cut && t("laps.cut")].filter(Boolean).join(", ");
+      const gap = ok && best && !isBest ? l.time_s - best.time_s : null;
+      const w = gap != null ? Math.min(100, (gap / span) * 100) : 0;
+      return `<tr data-lap="${l.number}" class="${ok ? "" : "invalid"} ${isBest ? "is-best" : ""} ${compared ? "is-cmp" : ""}">
+        <td class="n">${t("lap.n", { n: l.number })}</td>
+        <td class="time">${fmtLap(l.time_s)}</td>
+        <td class="gap">${isBest ? t("laps.best") : gap != null ? fmtDelta(gap) : esc(why)}</td>
+        <td class="bar">${gap != null ? `<span style="width:${w.toFixed(0)}%"></span>` : ""}</td>
       </tr>`;
     })
     .join("");
-  $("potential").innerHTML = `
-    <div class="pot-head">
-      <span class="pot-time">${fmtLap(p.theoretical_best_s)}</span>
-      <span class="pot-gain">−${gain.toFixed(3)} ${t("unit.s")}</span>
-    </div>
-    <div class="pot-sub">${t("potential.sub", { laps: p.laps_used.join(", ") })}</div>
-    <table class="pot-table">
-      <tr><th></th><th class="num">${t("potential.reserve")}</th><th class="num">${t("potential.from")}</th><th colspan="2">${t("potential.consistency")}</th></tr>
-      ${rows}
-    </table>`;
+  return `<table class="laps">${rows}</table><p class="muted small">${t("review.lapsHint")}</p>`;
 }
 
-$("potential").addEventListener("click", async (e) => {
-  const row = (e.target as HTMLElement).closest<HTMLElement>("tr[data-corner]");
-  const s = state.current;
-  const p = s ? state.potential.get(s.id) : null;
-  if (!row || !s || !p) return;
-  const lap = Number(row.dataset.lap);
-  state.a = { session: s.id, lap: p.reference_lap };
-  state.b = lap !== p.reference_lap ? { session: s.id, lap } : null;
-  renderLaps();
-  await updateComparison();
-  zoomToCorner(Number(row.dataset.corner));
+// ---------- telemetry ----------
+
+function renderTelemetry() {
+  const cmp = state.cmp;
+  if (!cmp) return;
+  $("tele-head").innerHTML = `${compareSelect("tele-compare")}<div class="legend">${legend()}</div>
+    <button id="export-lap" class="btn btn-quiet">${t("tele.export")}</button>`;
+  $("export-lap").onclick = async () => {
+    const path = await call<string>("export_csv", { session: state.a!.session, lap: state.a!.lap });
+    toast(t("toast.exported", { path }));
+  };
+  state.charts?.destroy();
+  lastCursor = undefined;
+  state.charts = buildCharts($("charts"), cmp, onCursor);
+  renderCorners();
+  renderPotential();
+  renderStats();
+  teleMap.render(cmp, null, { mode: "delta" });
+  onCursor(null);
+}
+
+$("tele-head").addEventListener("change", (e) => {
+  const sel = e.target as HTMLSelectElement;
+  if (sel.id === "tele-compare") applyComparePick(sel.value);
 });
 
-// ---------- corners ----------
+let lastCursor: number | null | undefined;
+function onCursor(idx: number | null) {
+  if (idx === lastCursor) return;
+  lastCursor = idx;
+  if (!state.cmp || state.view !== "telemetry") return;
+  teleMap.render(state.cmp, idx, { mode: "delta" });
+  updateChartHeaders($("charts"), state.cmp, idx);
+  renderReadout(idx);
+}
+
+function zoomToCorner(number: number) {
+  const cmp = state.cmp;
+  const c = cmp?.corners.find((c) => c.number === number);
+  if (!cmp || !c || !state.charts) return;
+  $("corners").querySelectorAll("tr.sel").forEach((r) => r.classList.remove("sel"));
+  $("corners").querySelector(`tr[data-corner="${number}"]`)?.classList.add("sel");
+  // Setting the scale on one plot propagates to the others via the sync hook.
+  state.charts.plots[0]?.setScale("x", { min: cmp.x[c.start], max: cmp.x[c.end] });
+}
 
 function renderCorners() {
   const el = $("corners");
@@ -386,43 +510,36 @@ function renderCorners() {
   }
   const hasB = !!cmp.compare;
   const m = t("unit.m");
-  const worst = Math.max(0.05, ...cmp.corners.map((c) => Math.abs(c.delta_s ?? 0)));
   const sp = (v: number | null) => (v == null ? "–" : v.toFixed(0));
-  // B relative to A along the lap: "+12 m" = B does it 12 m later.
   const shift = (p: [number | null, number | null]) => {
     const [a, b] = p;
     if (a == null && b == null) return "";
-    if (a == null) return `<span class="dim">${t("corners.bOnly")}</span>`;
-    if (b == null) return `<span class="dim">${t("corners.aOnly")}</span>`;
+    if (a == null) return t("corners.bOnly");
+    if (b == null) return t("corners.aOnly");
     const d = Math.round(b - a);
     return d === 0 ? t("corners.same") : `${d > 0 ? "+" : "−"}${Math.abs(d)} ${m}`;
   };
-  const hintsFor = (n: number) =>
-    cmp.hints
-      .filter((h) => h.corner === n)
-      .map(hintText)
-      .join("\n");
   const rows = cmp.corners
     .map((c) => {
       const d = c.delta_s ?? 0;
-      const w = (Math.abs(d) / worst) * 100;
+      const cls = d > 0.02 ? "loss" : d < -0.02 ? "gain" : "";
       const minDiff = c.min_speed[0] != null && c.min_speed[1] != null ? c.min_speed[1] - c.min_speed[0] : null;
-      return `<tr data-corner="${c.number}" title="${esc(hintsFor(c.number))}">
-        <td class="cn">T${c.number}</td>
-        <td class="num dim">${Math.round(c.apex_m)} ${m}</td>
-        ${hasB ? `<td class="num ${d > 0.005 ? "loss" : d < -0.005 ? "gain" : ""}">${fmtDelta(d)}</td>
-        <td class="bar"><span class="${d > 0 ? "loss" : "gain"}" style="width:${w.toFixed(0)}%"></span></td>` : ""}
+      return `<tr data-corner="${c.number}" title="${esc(
+        cmp.hints.filter((h) => h.corner === c.number).map(hintText).join("\n"),
+      )}">
+        <td>${c.number}</td>
+        ${hasB ? `<td class="num ${cls}">${fmtDelta(d)}</td>` : ""}
         <td class="num">${sp(c.min_speed[0])}${hasB ? ` / ${sp(c.min_speed[1])}` : ""}</td>
-        ${hasB ? `<td class="num ${minDiff != null && minDiff < -2 ? "loss" : minDiff != null && minDiff > 2 ? "gain" : "dim"}">${minDiff == null ? "" : `${minDiff > 0 ? "+" : "−"}${Math.abs(minDiff).toFixed(1)}`}</td>
+        ${hasB ? `<td class="num">${minDiff == null ? "" : `${minDiff > 0 ? "+" : "−"}${Math.abs(minDiff).toFixed(1)}`}</td>
         <td class="num">${shift(c.brake_m)}</td>
         <td class="num">${shift(c.throttle_m)}</td>` : ""}
       </tr>`;
     })
     .join("");
-  el.innerHTML = `<table class="corner-table">
-    <tr><th>${t("corners.corner")}</th><th class="num">${t("corners.apex")}</th>${hasB ? `<th class="num">${t("corners.bVsA")}</th><th></th>` : ""}
-      <th class="num">${t("corners.minSpeed")}${hasB ? " A / B" : ""}</th>${hasB ? `<th class="num">${t("corners.deltaMin")}</th><th class="num">${t("corners.brakeB")}</th><th class="num">${t("corners.throttleB")}</th>` : ""}</tr>
-    ${rows}</table>`;
+  el.innerHTML = `<table class="data">
+    <thead><tr><th>${t("corners.corner")}</th>${hasB ? `<th class="num">${t("corners.time")}</th>` : ""}
+      <th class="num">${t("corners.minSpeed")}</th>${hasB ? `<th class="num">${t("corners.deltaMin")}</th><th class="num">${t("corners.brake")}</th><th class="num">${t("corners.throttle")}</th>` : ""}</tr></thead>
+    <tbody>${rows}</tbody></table>`;
 }
 
 $("corners").addEventListener("click", (e) => {
@@ -430,44 +547,77 @@ $("corners").addEventListener("click", (e) => {
   if (row) zoomToCorner(Number(row.dataset.corner));
 });
 
-// ---------- inspector ----------
+function renderPotential() {
+  const s = state.current;
+  const p = s ? state.potential.get(s.id) : null;
+  const el = $("tele-potential");
+  if (!p) {
+    el.innerHTML = "";
+    return;
+  }
+  const rows = [...p.segments]
+    .sort((x, y) => y.reference_s - y.best_s - (x.reference_s - x.best_s))
+    .filter((seg) => seg.reference_s - seg.best_s > 0.0005)
+    .map(
+      (seg) => `<tr data-corner="${seg.corner}" data-lap="${seg.best_lap}">
+        <td>${seg.corner}</td>
+        <td class="num gain">−${(seg.reference_s - seg.best_s).toFixed(3)}</td>
+        <td class="num">${t("lap.n", { n: seg.best_lap })}</td>
+        <td class="num">±${seg.stdev_s.toFixed(2)}</td>
+      </tr>`,
+    )
+    .join("");
+  el.innerHTML = `<h3>${t("potential.title", { time: fmtLap(p.theoretical_best_s) })}</h3>
+    <p class="muted small">${t("potential.sub")}</p>
+    <table class="data"><thead><tr><th>${t("corners.corner")}</th><th class="num">${t("potential.reserve")}</th><th class="num">${t("potential.from")}</th><th class="num">${t("potential.spread")}</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
 
-const READOUT: ["ch.speed" | "ch.throttle" | "ch.brake" | "ch.gear" | "ch.rpm" | "ch.steer" | "ch.g_lat" | "ch.g_long", string, number, number, string][] = [
-  // label, channel, multiplier, digits, suffix
-  ["ch.speed", "speed", 1, 1, ""],
-  ["ch.throttle", "throttle", 100, 0, " %"],
-  ["ch.brake", "brake", 100, 0, " %"],
-  ["ch.gear", "gear", 1, 0, ""],
-  ["ch.rpm", "rpm", 1, 0, ""],
-  ["ch.steer", "steer_deg", 1, 0, "°"],
-  ["ch.g_lat", "g_lat", 1, 2, ""],
-  ["ch.g_long", "g_long", 1, 2, ""],
+$("tele-potential").addEventListener("click", async (e) => {
+  const row = (e.target as HTMLElement).closest<HTMLElement>("tr[data-corner]");
+  const s = state.current;
+  const best = s && bestLap(s);
+  if (!row || !s || !best) return;
+  state.a = { session: s.id, lap: best.number };
+  state.b = { session: s.id, lap: Number(row.dataset.lap) };
+  await updateComparison();
+  zoomToCorner(Number(row.dataset.corner));
+});
+
+const READOUT: ["ch.speed" | "ch.throttle" | "ch.brake" | "ch.gear" | "ch.rpm" | "ch.steer" | "ch.g_lat" | "ch.g_long", string, number, number][] = [
+  ["ch.speed", "speed", 1, 0],
+  ["ch.throttle", "throttle", 100, 0],
+  ["ch.brake", "brake", 100, 0],
+  ["ch.gear", "gear", 1, 0],
+  ["ch.rpm", "rpm", 1, 0],
+  ["ch.steer", "steer_deg", 1, 0],
+  ["ch.g_lat", "g_lat", 1, 2],
+  ["ch.g_long", "g_long", 1, 2],
 ];
 
 function renderReadout(idx: number | null) {
   const cmp = state.cmp;
   const el = $("readout");
   if (!cmp || idx == null) {
-    el.innerHTML = `<tr><td class="muted">${t("cursor.hover")}</td></tr>`;
+    el.innerHTML = `<p class="muted small">${t("cursor.hover")}</p>`;
     return;
   }
   const hasB = !!cmp.compare;
-  const head = `<tr><th></th><th style="color:${COLOR_A}">A</th>${hasB ? `<th style="color:${COLOR_B}">B</th>` : ""}</tr>`;
   const row = (label: string, a: string, b: string) =>
     `<tr><td>${label}</td><td class="num">${a}</td>${hasB ? `<td class="num">${b}</td>` : ""}</tr>`;
-  let html = head + row(t("cursor.distance"), `${Math.round(cmp.x[idx])} ${t("unit.m")}`, "");
+  let html = row(t("cursor.distance"), `${Math.round(cmp.x[idx])} ${t("unit.m")}`, "");
   html += row(t("cursor.time"), cmp.reference.elapsed[idx].toFixed(2), cmp.compare ? cmp.compare.elapsed[idx].toFixed(2) : "");
-  for (const [label, ch, m, dg, suffix] of READOUT) {
+  for (const [label, ch, m, dg] of READOUT) {
     const a = cmp.reference.channels[ch]?.[idx];
     const b = cmp.compare?.channels[ch]?.[idx];
     if (a == null) continue;
-    html += row(t(label) + suffix, (a * m).toFixed(dg), b == null ? "" : (b * m).toFixed(dg));
+    html += row(t(label), (a * m).toFixed(dg), b == null ? "" : (b * m).toFixed(dg));
   }
-  el.innerHTML = html;
+  el.innerHTML = `<table class="data compact"><thead><tr><th></th><th class="num" style="color:${COLOR_A}">●</th>${hasB ? `<th class="num" style="color:${COLOR_B}">●</th>` : ""}</tr></thead><tbody>${html}</tbody></table>`;
 }
 
 function renderStats() {
-  const el = $("stats");
+  const el = $("tele-stats");
   const get = (r: LapRef | null) => (r ? state.stats.get(r.session)?.find((s) => s.lap === r.lap) : undefined);
   const a = get(state.a);
   const b = get(state.b);
@@ -476,49 +626,60 @@ function renderStats() {
     return;
   }
   const rows: [Parameters<typeof t>[0], (s: LapStats) => string][] = [
-    ["st.lapTime", (s) => fmtLap(s.time_s)],
-    ["st.maxSpeed", (s) => s.max_speed_kmh.toFixed(1)],
-    ["st.avgSpeed", (s) => s.avg_speed_kmh.toFixed(1)],
-    ["st.fullThrottle", (s) => `${s.full_throttle_pct.toFixed(1)}%`],
-    ["st.braking", (s) => `${s.braking_pct.toFixed(1)}%`],
-    ["st.coasting", (s) => `${s.coasting_pct.toFixed(1)}%`],
-    ["st.gearChanges", (s) => String(s.gear_changes)],
+    ["st.maxSpeed", (s) => s.max_speed_kmh.toFixed(0)],
+    ["st.avgSpeed", (s) => s.avg_speed_kmh.toFixed(0)],
+    ["st.fullThrottle", (s) => `${s.full_throttle_pct.toFixed(0)}%`],
+    ["st.braking", (s) => `${s.braking_pct.toFixed(0)}%`],
+    ["st.coasting", (s) => `${s.coasting_pct.toFixed(0)}%`],
     ["st.maxLatG", (s) => s.max_g_lat.toFixed(2)],
     ["st.maxBrakeG", (s) => s.max_g_brake.toFixed(2)],
   ];
-  el.innerHTML =
-    `<tr><th></th><th style="color:${COLOR_A}">A</th>${b ? `<th style="color:${COLOR_B}">B</th>` : ""}</tr>` +
-    rows
-      .map(([label, f]) => `<tr><td>${t(label)}</td><td class="num">${f(a)}</td>${b ? `<td class="num">${f(b)}</td>` : ""}</tr>`)
-      .join("");
+  el.innerHTML = `<h3>${t("stats.title")}</h3><table class="data compact"><thead><tr><th></th><th class="num" style="color:${COLOR_A}">●</th>${b ? `<th class="num" style="color:${COLOR_B}">●</th>` : ""}</tr></thead><tbody>${rows
+    .map(([label, f]) => `<tr><td>${t(label)}</td><td class="num">${f(a)}</td>${b ? `<td class="num">${f(b)}</td>` : ""}</tr>`)
+    .join("")}</tbody></table>`;
 }
 
-$("export-session").addEventListener("click", async () => {
-  if (!state.current) return;
-  const path = await call<string>("export_csv", { session: state.current.id, lap: null });
-  toast(t("toast.exported", { path }));
-});
+// ---------- progress ----------
 
-$("refresh").addEventListener("click", () => loadSessions());
+function renderProgressView() {
+  renderProgress($("view-progress"), state.progress, state.current?.id ?? null, async (id) => {
+    state.view = "review";
+    await selectSession(id);
+  });
+}
 
-// ---------- replay import ----------
+// ---------- import, demo, export ----------
 
 async function importReplay(path: string) {
   toast(t("toast.importing", { file: path.split(/[\\/]/).pop() ?? path }));
   const meta = await call<Session>("import_replay", { path });
-  toast(t("toast.imported", { track: meta.track, laps: lapsCount(meta.laps.filter(isValidLap).length) }));
-  state.a = null;
-  state.b = null;
-  await loadSessions();
+  toast(t("toast.imported", { track: prettyName(meta.track), laps: lapsCount(meta.laps.filter(isValidLap).length) }));
+  state.sessions = await call<Session[]>("list_sessions");
+  renderSidebar();
   await selectSession(meta.id);
 }
 
-$("import").addEventListener("click", async () => {
-  const path = await open({
-    multiple: false,
-    filters: [{ name: t("dialog.replay"), extensions: ["acreplay"] }],
-  });
+async function pickReplay() {
+  const path = await open({ multiple: false, filters: [{ name: t("dialog.replay"), extensions: ["acreplay"] }] });
   if (typeof path === "string") await importReplay(path);
+}
+
+$("import").addEventListener("click", pickReplay);
+$("welcome-import").addEventListener("click", pickReplay);
+
+$("welcome-demo").addEventListener("click", async () => {
+  const btn = $<HTMLButtonElement>("welcome-demo");
+  btn.disabled = true;
+  btn.textContent = t("welcome.demoBusy");
+  try {
+    const id = await call<string>("create_demo_session");
+    state.sessions = await call<Session[]>("list_sessions");
+    renderSidebar();
+    await selectSession(id);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t("welcome.demo");
+  }
 });
 
 getCurrentWebview().onDragDropEvent(async ({ payload: p }) => {
@@ -544,11 +705,10 @@ $("rec-btn").addEventListener("click", async () => {
     setStatus(() => t("rec.stopping"));
     await call("stop_recording");
     setRecording(false);
-    setStatus(() => t("rec.idle"));
+    setStatus(() => "");
     loadSessions();
   } else {
-    const source = $<HTMLSelectElement>("source").value;
-    await call("start_recording", { source });
+    await call("start_recording", { source: $<HTMLSelectElement>("source").value });
     setRecording(true);
     setStatus(() => t("rec.starting"));
   }
@@ -560,14 +720,14 @@ listen<RecorderEvent>("recorder", ({ payload: e }) => {
       setStatus(() => t("rec.waiting"));
       break;
     case "session_started":
-      setStatus(() => `● ${e.info.track} · ${e.info.car}`);
+      setStatus(() => t("rec.onTrack", { track: prettyName(e.info.track) }));
       loadSessions();
       break;
     case "lap_completed":
       if (e.lap.complete) {
         const params = { n: e.lap.number, time: fmtLap(e.lap.time_s) };
         setStatus(() => t("rec.lap", params));
-        toast(t(isValidLap(e.lap) ? "toast.lap" : "toast.lapInvalid", params));
+        if (!isValidLap(e.lap)) toast(t("toast.lapInvalid", params));
       }
       break;
     case "session_saved":
@@ -587,39 +747,8 @@ listen<RecorderEvent>("recorder", ({ payload: e }) => {
 
 listen("recorder-stopped", () => {
   setRecording(false);
-  setStatus(() => t("rec.idle"));
+  setStatus(() => "");
 });
-
-// ---------- views ----------
-
-const ANALYSIS_PARTS = ["summary", "coach", "corners", "charts"];
-
-async function loadProgress() {
-  const s = state.current;
-  state.progress = s?.finished ? await call<ComboProgress>("combo_progress", { session: s.id }) : null;
-  renderProgress($("progress"), state.progress, s?.id ?? null, openFromProgress);
-}
-
-async function openFromProgress(id: string) {
-  state.a = null;
-  state.b = null;
-  setView("analysis");
-  await selectSession(id);
-}
-
-function setView(v: "analysis" | "progress") {
-  state.view = v;
-  document.querySelectorAll<HTMLElement>(".tab").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
-  $("progress").hidden = v !== "progress";
-  for (const id of ANALYSIS_PARTS) $(id).hidden = v !== "analysis";
-  if (v === "progress") loadProgress();
-  // Charts were laid out while hidden; rebuild them at the real width.
-  else if (state.cmp) renderComparison();
-}
-
-document.querySelectorAll<HTMLElement>(".tab").forEach((b) =>
-  b.addEventListener("click", () => setView(b.dataset.view as "analysis" | "progress")),
-);
 
 // ---------- language ----------
 
@@ -628,12 +757,8 @@ function applyLanguage(l: Lang, persist = false) {
   $<HTMLSelectElement>("lang").value = l;
   applyStatic();
   $("rec-status").textContent = state.status();
-  renderSessions();
-  renderLaps();
-  renderPotential();
-  if (state.cmp) renderComparison();
-  else renderReadout(null);
-  if (state.view === "progress") renderProgress($("progress"), state.progress, state.current?.id ?? null, openFromProgress);
+  renderSidebar();
+  if (state.current) renderSession();
 }
 
 $("lang").addEventListener("change", (e) => applyLanguage((e.target as HTMLSelectElement).value as Lang, true));
@@ -642,6 +767,7 @@ $("lang").addEventListener("change", (e) => applyLanguage((e.target as HTMLSelec
 
 (async () => {
   applyLanguage(getLang());
+  setStatus(() => "");
   const st = await call<{ running: boolean; source: string | null }>("recorder_status");
   if (st.running) {
     if (st.source) $<HTMLSelectElement>("source").value = st.source;

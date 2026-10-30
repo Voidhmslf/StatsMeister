@@ -221,6 +221,37 @@ async fn import_replay(state: State<'_, AppState>, path: String) -> Result<Sessi
     .map_err(err)
 }
 
+/// Generates a short demo session (synthetic car, a few laps) for people
+/// trying the app without a game. Returns the new session id.
+#[tauri::command]
+async fn create_demo_session(state: State<'_, AppState>) -> Result<String, String> {
+    const LAPS: u32 = 6;
+    let opts = RecorderOptions {
+        data_dir: state.data_dir.clone(),
+        ..Default::default()
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let stop = AtomicBool::new(false);
+        let mut id = None;
+        let mut laps = 0;
+        let src = sm_sources::open(SourceKind::Demo, &SourceOptions { fast: true });
+        sm_recorder::run(src, &opts, &stop, |e| match e {
+            RecorderEvent::SessionStarted { id: new_id, .. } => id = Some(new_id),
+            RecorderEvent::LapCompleted { lap, .. } if lap.complete => {
+                laps += 1;
+                if laps >= LAPS {
+                    stop.store(true, Ordering::Relaxed);
+                }
+            }
+            _ => {}
+        })
+        .map_err(err)?;
+        id.ok_or_else(|| "demo produced no session".to_string())
+    })
+    .await
+    .map_err(err)?
+}
+
 #[tauri::command]
 fn recorder_status(state: State<'_, AppState>) -> RecorderStatus {
     let rec = state.recording.lock().unwrap();
@@ -302,6 +333,7 @@ pub fn run() {
             combo_progress,
             export_csv,
             import_replay,
+            create_demo_session,
             recorder_status,
             start_recording,
             stop_recording,

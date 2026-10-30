@@ -6,81 +6,88 @@
     <title>StatsMeister</title>
   </head>
   <body>
-    <header class="topbar">
-      <div class="brand"><span class="brand-mark"></span>StatsMeister</div>
-      <nav class="tabs">
-        <button class="tab on" data-view="analysis" data-i18n="view.analysis"></button>
-        <button class="tab" data-view="progress" data-i18n="view.progress"></button>
-      </nav>
-      <div class="rec">
-        <select id="source">
-          <option value="auto" data-i18n="source.auto"></option>
-          <option value="ac">Assetto Corsa</option>
-          <option value="acc">Assetto Corsa Competizione</option>
-          <option value="demo" data-i18n="source.demo"></option>
-        </select>
-        <button id="rec-btn" class="btn btn-rec"><span class="dot"></span><span id="rec-label" data-i18n="app.record"></span></button>
-        <span id="rec-status" class="rec-status"></span>
-        <select id="lang" class="lang" title="Language / Язык">
-          <option value="ru">RU</option>
-          <option value="en">EN</option>
+    <aside class="side">
+      <div class="logo">StatsMeister</div>
+
+      <div class="side-actions">
+        <button id="rec-btn" class="btn btn-primary"><span class="rec-dot" aria-hidden="true"></span><span id="rec-label" data-i18n="app.record"></span></button>
+        <label class="field field-inline">
+          <span data-i18n="app.game"></span>
+          <select id="source">
+            <option value="auto" data-i18n="source.auto"></option>
+            <option value="ac">Assetto Corsa</option>
+            <option value="acc">ACC</option>
+            <option value="demo" data-i18n="source.demo"></option>
+          </select>
+        </label>
+        <p id="rec-status" class="rec-status" role="status" hidden></p>
+        <button id="import" class="btn" data-i18n="app.import" data-i18n-title="app.importTitle"></button>
+      </div>
+
+      <nav id="sessions" class="sessions" aria-label="Sessions"></nav>
+
+      <div class="side-foot">
+        <select id="lang" aria-label="Language / Язык">
+          <option value="ru">Русский</option>
+          <option value="en">English</option>
         </select>
       </div>
-    </header>
-
-    <aside class="sidebar">
-      <section class="panel">
-        <div class="panel-head">
-          <h2 data-i18n="sessions.title"></h2>
-          <div class="panel-actions">
-            <button id="import" class="btn btn-ghost" data-i18n="sessions.import" data-i18n-title="sessions.importTitle"></button>
-            <button id="refresh" class="btn btn-ghost" data-i18n-title="sessions.refresh">↻</button>
-          </div>
-        </div>
-        <ul id="sessions" class="sessions"></ul>
-      </section>
-      <section class="panel laps-panel">
-        <div class="panel-head">
-          <h2 id="laps-title"></h2>
-          <button id="export-session" class="btn btn-ghost" disabled>CSV</button>
-        </div>
-        <div class="laps-hint" data-i18n="laps.hint"></div>
-        <table id="laps" class="laps"></table>
-      </section>
     </aside>
 
     <main class="main">
-      <div id="progress" class="progress" hidden></div>
-      <div id="summary" class="summary"></div>
-      <div id="coach" class="coach"></div>
-      <div id="corners" class="corners"></div>
-      <div id="charts" class="charts">
-        <div class="empty" data-i18n="empty"></div>
-      </div>
+      <section id="welcome" class="welcome" hidden>
+        <h1 data-i18n="welcome.title"></h1>
+        <p data-i18n="welcome.text"></p>
+        <p data-i18n="welcome.replay"></p>
+        <div class="welcome-actions">
+          <button id="welcome-import" class="btn" data-i18n="app.import"></button>
+          <button id="welcome-demo" class="btn btn-quiet" data-i18n="welcome.demo"></button>
+        </div>
+      </section>
+
+      <section id="session" class="session-view" hidden>
+        <header class="session-head">
+          <div>
+            <h1 id="s-title"></h1>
+            <p id="s-meta" class="meta"></p>
+          </div>
+          <div id="s-best" class="s-best"></div>
+        </header>
+        <nav class="tabs" role="tablist">
+          <button class="tab" role="tab" data-view="review" data-i18n="tab.review"></button>
+          <button class="tab" role="tab" id="tab-telemetry" data-view="telemetry" data-i18n="tab.telemetry"></button>
+          <button class="tab" role="tab" id="tab-progress" data-view="progress" data-i18n="tab.progress"></button>
+        </nav>
+
+        <div id="view-review" class="view review" role="tabpanel">
+          <div id="review-body" class="review-body"></div>
+          <aside class="review-side">
+            <canvas id="review-map" class="map"></canvas>
+          </aside>
+        </div>
+
+        <div id="view-telemetry" class="view telemetry" role="tabpanel" hidden>
+          <div id="tele-head" class="tele-head"></div>
+          <div class="tele-grid">
+            <div class="tele-main">
+              <div id="corners" class="corners"></div>
+              <div id="charts" class="charts"></div>
+            </div>
+            <aside class="tele-side">
+              <canvas id="tele-map" class="map"></canvas>
+              <div id="readout"></div>
+              <div id="tele-potential"></div>
+              <div id="tele-stats"></div>
+            </aside>
+          </div>
+        </div>
+
+        <div id="view-progress" class="view progress" role="tabpanel" hidden></div>
+      </section>
     </main>
 
-    <aside class="inspector">
-      <section class="panel" id="potential-panel" hidden>
-        <h2 data-i18n="potential.title"></h2>
-        <div id="potential"></div>
-      </section>
-      <section class="panel">
-        <h2 data-i18n="track.title"></h2>
-        <canvas id="map" class="map"></canvas>
-        <div class="map-legend"><span class="gain" data-i18n="track.gain"></span><span class="loss" data-i18n="track.loss"></span></div>
-      </section>
-      <section class="panel">
-        <h2 data-i18n="cursor.title"></h2>
-        <table id="readout" class="readout"></table>
-      </section>
-      <section class="panel">
-        <h2 data-i18n="stats.title"></h2>
-        <table id="stats" class="readout"></table>
-      </section>
-    </aside>
-
-    <div id="drop" class="drop"><div data-i18n="drop.hint"></div></div>
-    <div id="toast" class="toast"></div>
+    <div id="drop" class="drop"><p data-i18n="drop.hint"></p></div>
+    <div id="toast" class="toast" role="alert"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

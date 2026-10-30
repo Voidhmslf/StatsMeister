@@ -2,11 +2,13 @@ import uPlot from "uplot";
 import type { Comparison } from "./types";
 import { t } from "./i18n";
 
-export const COLOR_A = "#22d3ee";
-export const COLOR_B = "#f472b6";
-const COLOR_DELTA = "#fbbf24";
-const AXIS = "#7d8794";
-const GRID = "rgba(255,255,255,0.06)";
+/** Line colours: the reference (best) lap is neutral, the compared lap carries the accent. */
+export const COLOR_A = "#e4e4e7";
+export const COLOR_B = "#f0a43a";
+const COLOR_DELTA = "#a1a1aa";
+const AXIS = "#8a8a93";
+const GRID = "rgba(255,255,255,0.05)";
+const FONT = '12px "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif';
 
 export interface ChartDef {
   key: string;
@@ -23,20 +25,31 @@ export interface ChartDef {
 }
 
 export const CHARTS: ChartDef[] = [
-  { key: "delta", title: "ch.delta", unit: "unit.s", height: 120, digits: 3 },
-  { key: "speed", title: "ch.speed", unit: "unit.kmh", height: 200, digits: 1 },
-  { key: "throttle", title: "ch.throttle", unit: "%", height: 100, mul: 100, range: [0, 100], digits: 0 },
-  { key: "brake", title: "ch.brake", unit: "%", height: 100, mul: 100, range: [0, 100], digits: 0 },
-  { key: "steer_deg", title: "ch.steer", unit: "°", height: 110, digits: 0 },
-  { key: "steer", title: "ch.steer", unit: "%", height: 110, mul: 100, digits: 0 },
-  { key: "gear", title: "ch.gear", unit: "", height: 80, stepped: true, digits: 0 },
-  { key: "rpm", title: "ch.rpm", unit: "", height: 110, digits: 0 },
-  { key: "g_lat", title: "ch.g_lat", unit: "g", height: 110, digits: 2 },
+  { key: "delta", title: "ch.delta", unit: "unit.s", height: 110, digits: 3 },
+  { key: "speed", title: "ch.speed", unit: "unit.kmh", height: 190, digits: 1 },
+  { key: "throttle", title: "ch.throttle", unit: "%", height: 90, mul: 100, range: [0, 100], digits: 0 },
+  { key: "brake", title: "ch.brake", unit: "%", height: 90, mul: 100, range: [0, 100], digits: 0 },
+  { key: "steer_deg", title: "ch.steer", unit: "°", height: 100, digits: 0 },
+  { key: "steer", title: "ch.steer", unit: "%", height: 100, mul: 100, digits: 0 },
+  { key: "gear", title: "ch.gear", unit: "", height: 70, stepped: true, digits: 0 },
+  { key: "rpm", title: "ch.rpm", unit: "", height: 100, digits: 0 },
+  { key: "g_lat", title: "ch.g_lat", unit: "g", height: 100, digits: 2 },
 ];
 
 export interface ChartSet {
   plots: uPlot[];
   destroy(): void;
+}
+
+export interface ChartOptions {
+  /** Only these chart keys, in this order. Default: all available. */
+  keys?: string[];
+  /** Fixed x window in metres, e.g. one corner. */
+  range?: [number, number];
+  /** Shorter charts for inline use. */
+  compact?: boolean;
+  /** Cursor sync group; charts in different groups don't move together. */
+  syncKey?: string;
 }
 
 /** Values of one chart's series at a grid index: [A, B] or [delta]. */
@@ -48,16 +61,7 @@ export function valuesAt(cmp: Comparison, def: ChartDef, i: number): (number | n
   return [a == null ? null : a * m, b == null ? null : b * m];
 }
 
-export function buildCharts(
-  root: HTMLElement,
-  cmp: Comparison,
-  onCursor: (idx: number | null) => void,
-): ChartSet {
-  root.innerHTML = "";
-  const plots: uPlot[] = [];
-  const width = Math.max(300, root.clientWidth - 8);
-  let syncing = false;
-
+function availableDefs(cmp: Comparison, keys?: string[]): ChartDef[] {
   const has = (key: string) => cmp.reference.channels[key] != null;
   const defs = CHARTS.filter((d) => {
     if (d.key === "delta") return cmp.delta != null;
@@ -65,13 +69,29 @@ export function buildCharts(
     if (d.key === "steer" && has("steer_deg")) return false;
     return has(d.key);
   });
+  return keys ? keys.flatMap((k) => defs.filter((d) => d.key === k)) : defs;
+}
+
+export function buildCharts(
+  root: HTMLElement,
+  cmp: Comparison,
+  onCursor: (idx: number | null) => void,
+  opts: ChartOptions = {},
+): ChartSet {
+  root.innerHTML = "";
+  const plots: uPlot[] = [];
+  const width = () => Math.max(240, root.clientWidth);
+  let syncing = false;
+  const defs = availableDefs(cmp, opts.keys);
+  const height = (d: ChartDef) => (opts.compact ? Math.round(d.height * 0.7) : d.height);
 
   defs.forEach((def, n) => {
     const wrap = document.createElement("div");
     wrap.className = "chart";
     const head = document.createElement("div");
     head.className = "chart-head";
-    head.innerHTML = `<span class="chart-title">${t(def.title)}</span><span class="chart-unit">${def.unit.startsWith("unit.") ? t(def.unit as "unit.s") : def.unit}</span><span class="chart-vals" data-key="${def.key}"></span>`;
+    const unit = def.unit.startsWith("unit.") ? t(def.unit as "unit.s") : def.unit;
+    head.innerHTML = `<span class="chart-title">${t(def.title)}${unit ? `, ${unit}` : ""}</span><span class="chart-vals" data-key="${def.key}"></span>`;
     wrap.append(head);
     root.append(wrap);
 
@@ -81,50 +101,39 @@ export function buildCharts(
     let series: uPlot.Series[];
     if (def.key === "delta") {
       data = [cmp.x, cmp.delta!, cmp.x.map(() => 0)];
-      series = [
-        {},
-        { stroke: COLOR_DELTA, width: 1.5 },
-        { stroke: "rgba(255,255,255,0.25)", width: 1, dash: [4, 4] },
-      ];
+      series = [{}, { stroke: COLOR_DELTA, width: 1.5 }, { stroke: "rgba(255,255,255,0.18)", width: 1 }];
     } else {
       data = [cmp.x, scaled(cmp.reference.channels[def.key])];
       const paths = def.stepped ? uPlot.paths.stepped!({ align: 1 }) : undefined;
       series = [{}, { stroke: COLOR_A, width: 1.5, paths }];
       if (cmp.compare) {
         data.push(scaled(cmp.compare.channels[def.key]));
-        series.push({ stroke: COLOR_B, width: 1.25, paths });
+        series.push({ stroke: COLOR_B, width: 1.5, paths });
       }
     }
 
     const isLast = n === defs.length - 1;
-    const opts: uPlot.Options = {
-      width,
-      height: def.height,
+    const axis = { stroke: AXIS, font: FONT, grid: { stroke: GRID, width: 1 }, ticks: { show: false } };
+    const plotOpts: uPlot.Options = {
+      width: width(),
+      height: height(def),
       legend: { show: false },
       cursor: {
-        sync: { key: "statsmeister", setSeries: false },
-        drag: { x: true, y: false },
+        sync: { key: opts.syncKey ?? "telemetry", setSeries: false },
+        drag: { x: !opts.range, y: false },
         points: { size: 5 },
       },
       scales: {
-        x: { time: false },
+        x: opts.range ? { time: false, range: opts.range } : { time: false },
         y: def.range ? { range: def.range } : {},
       },
       axes: [
         {
-          stroke: AXIS,
-          grid: { stroke: GRID },
-          ticks: { stroke: GRID },
-          size: isLast ? 30 : 6,
-          values: isLast ? (_u, v) => v.map((m) => `${m} ${t("unit.m")}`) : () => [],
+          ...axis,
+          size: isLast ? 28 : 4,
+          values: isLast ? (_u, v) => v.map((x) => `${x} ${t("unit.m")}`) : () => [],
         },
-        {
-          stroke: AXIS,
-          grid: { stroke: GRID },
-          ticks: { stroke: GRID },
-          size: 52,
-          font: "11px system-ui",
-        },
+        { ...axis, size: 48 },
       ],
       series,
       hooks: {
@@ -142,20 +151,20 @@ export function buildCharts(
         ],
       },
     };
-    plots.push(new uPlot(opts, data, wrap));
+    plots.push(new uPlot(plotOpts, data, wrap));
   });
 
   // Resizing plots can toggle the scrollbar and re-trigger the observer, so
   // defer to the next frame and skip no-op width changes.
-  let lastWidth = width;
+  let lastWidth = width();
   let frame = 0;
   const ro = new ResizeObserver(() => {
     cancelAnimationFrame(frame);
     frame = requestAnimationFrame(() => {
-      const w = Math.max(300, root.clientWidth - 8);
+      const w = width();
       if (w === lastWidth) return;
       lastWidth = w;
-      plots.forEach((p, i) => p.setSize({ width: w, height: defs[i].height }));
+      plots.forEach((p, i) => p.setSize({ width: w, height: height(defs[i]) }));
     });
   });
   ro.observe(root);
@@ -182,8 +191,8 @@ export function updateChartHeaders(root: HTMLElement, cmp: Comparison, idx: numb
     const fmt = (v: number | null) => (v == null || Number.isNaN(v) ? "–" : v.toFixed(def.digits ?? 1));
     el.innerHTML =
       def.key === "delta"
-        ? `<b style="color:${COLOR_DELTA}">${(vals[0] ?? 0) >= 0 ? "+" : ""}${fmt(vals[0])}</b>`
-        : `<b style="color:${COLOR_A}">${fmt(vals[0])}</b>` +
-          (vals.length > 1 && cmp.compare ? ` <b style="color:${COLOR_B}">${fmt(vals[1])}</b>` : "");
+        ? `<span>${(vals[0] ?? 0) >= 0 ? "+" : ""}${fmt(vals[0])}</span>`
+        : `<span style="color:${COLOR_A}">${fmt(vals[0])}</span>` +
+          (vals.length > 1 && cmp.compare ? `<span style="color:${COLOR_B}">${fmt(vals[1])}</span>` : "");
   }
 }
