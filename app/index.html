@@ -8,6 +8,10 @@
   <body>
     <header class="topbar">
       <div class="brand"><span class="brand-mark"></span>StatsMeister</div>
+      <nav class="tabs">
+        <button class="tab on" data-view="analysis" data-i18n="view.analysis"></button>
+        <button class="tab" data-view="progress" data-i18n="view.progress"></button>
+      </nav>
       <div class="rec">
         <select id="source">
           <option value="auto" data-i18n="source.auto"></option>
@@ -46,6 +50,7 @@
     </aside>
 
     <main class="main">
+      <div id="progress" class="progress" hidden></div>
       <div id="summary" class="summary"></div>
       <div id="coach" class="coach"></div>
       <div id="corners" class="corners"></div>

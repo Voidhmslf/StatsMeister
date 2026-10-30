@@ -41,6 +41,8 @@ enum Cmd {
     Laps { session: String },
     /// Theoretical best lap from the best segments of all valid laps
     Potential { session: String },
+    /// Progress over sessions for the track + car of SESSION (default: latest)
+    Progress { session: Option<String> },
     /// Compare two laps: SESSION:LAP (LAP may be "best")
     Compare { reference: String, other: String },
     /// Import an Assetto Corsa replay (.acreplay) as a session
@@ -63,6 +65,7 @@ fn main() -> Result<()> {
         Cmd::List => list(&root),
         Cmd::Laps { session } => laps(&root, &session),
         Cmd::Potential { session } => potential(&root, &session),
+        Cmd::Progress { session } => progress(&root, session.as_deref().unwrap_or("latest")),
         Cmd::Compare { reference, other } => compare(&root, &reference, &other),
         Cmd::Import { file } => import(&root, &file),
         Cmd::Export { session, lap, out } => export(&root, &session, lap, &out),
@@ -198,6 +201,47 @@ fn potential(root: &Path, session: &str) -> Result<()> {
                 "—".into()
             },
             s.stdev_s
+        );
+    }
+    Ok(())
+}
+
+fn progress(root: &Path, session: &str) -> Result<()> {
+    use sm_analysis::progress::{ComboKey, combo_progress, combos};
+    let metas = sm_storage::list_sessions(root)?;
+    println!("Track + car combinations:");
+    for c in combos(&metas) {
+        println!(
+            "  {:<28} {:<28} {:>3} sessions  PB {}",
+            c.key.track,
+            c.key.car,
+            c.sessions,
+            c.best_s.map(fmt_lap).unwrap_or("-".into())
+        );
+    }
+    let key = ComboKey::of(&resolve_session(root, session)?);
+    let p = combo_progress(root, &metas, &key);
+    println!(
+        "
+{} / {}",
+        key.track, key.car
+    );
+    println!("Date                 laps   best       potential  median     spread");
+    let opt = |v: Option<f64>| v.map(fmt_lap).unwrap_or_else(|| "    -   ".into());
+    for s in &p.sessions {
+        let pb = p.personal_best.as_ref().is_some_and(|(id, _)| *id == s.id);
+        println!(
+            "{:<19} {:>5}   {}{}  {}  {}  ±{:.3}",
+            s.started_at
+                .get(..16)
+                .unwrap_or(&s.started_at)
+                .replace('T', " "),
+            s.valid_laps,
+            opt(s.best_s),
+            if pb { "*" } else { " " },
+            opt(s.potential_s),
+            opt(s.median_s),
+            s.stdev_s.unwrap_or(0.0)
         );
     }
     Ok(())

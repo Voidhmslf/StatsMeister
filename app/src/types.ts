@@ -115,6 +115,23 @@ export interface Potential {
   segments: SegmentStat[];
 }
 
+export interface SessionSummary {
+  id: string;
+  started_at: string;
+  valid_laps: number;
+  best_s: number | null;
+  best_lap: number | null;
+  potential_s: number | null;
+  median_s: number | null;
+  stdev_s: number | null;
+}
+
+export interface ComboProgress {
+  key: { game: string; track: string; car: string };
+  sessions: SessionSummary[];
+  personal_best: [string, number] | null;
+}
+
 export interface LapRef {
   session: string;
   lap: number;

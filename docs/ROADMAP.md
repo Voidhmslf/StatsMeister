@@ -20,7 +20,7 @@ headers.
   throttle points~~ (done). Next: corner names per track via community JSON
   files; peak brake pressure, trail braking, exit speed.
 - ~~Theoretical best lap and per-corner consistency (std-dev)~~ (done).
-  ~~Rule-based "why" hints~~ (done). Next: progress per track + car across days.
+  ~~Rule-based "why" hints~~ (done). ~~Progress per track + car across days~~ (done). Next: all-time potential across sessions, track configuration for live AC sessions.
 - Tyre/brake temperature and pressure windows per stint.
 - Math channels (user formulas), histograms, XY scatter (e.g. g-g diagram).
 - DuckDB over all Parquet files for cross-session queries.

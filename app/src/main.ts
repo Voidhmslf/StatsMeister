@@ -5,10 +5,13 @@ import { open } from "@tauri-apps/plugin-dialog";
 import "uplot/dist/uPlot.min.css";
 import "./style.css";
 import { buildCharts, updateChartHeaders, COLOR_A, COLOR_B, type ChartSet } from "./charts";
+import { esc, fmtDate, fmtDelta, fmtLap } from "./format";
 import { applyStatic, getLang, isKey, lapsCount, setLang, t, type Lang } from "./i18n";
+import { renderProgress } from "./progress";
 import { TrackMap } from "./trackmap";
 import {
   isValidLap,
+  type ComboProgress,
   type Comparison,
   type Hint,
   type LapRef,
@@ -31,32 +34,13 @@ const state = {
   charts: null as ChartSet | null,
   cursor: null as number | null,
   recording: false,
+  view: "analysis" as "analysis" | "progress",
+  progress: null as ComboProgress | null,
   /** Re-evaluated on language change so the status line follows it. */
   status: () => t("rec.idle"),
 };
 
 const map = new TrackMap($<HTMLCanvasElement>("map"));
-
-// ---------- formatting ----------
-
-function fmtLap(s: number): string {
-  if (!Number.isFinite(s) || s <= 0) return "–";
-  const m = Math.floor(s / 60);
-  return `${m}:${(s - m * 60).toFixed(3).padStart(6, "0")}`;
-}
-
-function fmtDelta(s: number): string {
-  return `${s >= 0 ? "+" : "−"}${Math.abs(s).toFixed(3)}`;
-}
-
-function fmtDate(iso: string): string {
-  const d = new Date(iso);
-  return isNaN(+d) ? iso : d.toLocaleString(getLang(), { dateStyle: "medium", timeStyle: "short" });
-}
-
-function esc(s: string): string {
-  return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
-}
 
 let toastTimer = 0;
 function toast(msg: string, kind: "info" | "error" = "info") {
@@ -137,6 +121,7 @@ async function selectSession(id: string, autoPick = true) {
     state.potential.set(id, await call<Potential | null>("session_potential", { session: id }));
   }
   renderPotential();
+  if (state.view === "progress") await loadProgress();
   // Keep an existing A selection so laps from different sessions can be compared.
   if (autoPick && !state.a) {
     const valid = s.laps.filter(isValidLap);
@@ -605,6 +590,37 @@ listen("recorder-stopped", () => {
   setStatus(() => t("rec.idle"));
 });
 
+// ---------- views ----------
+
+const ANALYSIS_PARTS = ["summary", "coach", "corners", "charts"];
+
+async function loadProgress() {
+  const s = state.current;
+  state.progress = s?.finished ? await call<ComboProgress>("combo_progress", { session: s.id }) : null;
+  renderProgress($("progress"), state.progress, s?.id ?? null, openFromProgress);
+}
+
+async function openFromProgress(id: string) {
+  state.a = null;
+  state.b = null;
+  setView("analysis");
+  await selectSession(id);
+}
+
+function setView(v: "analysis" | "progress") {
+  state.view = v;
+  document.querySelectorAll<HTMLElement>(".tab").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
+  $("progress").hidden = v !== "progress";
+  for (const id of ANALYSIS_PARTS) $(id).hidden = v !== "analysis";
+  if (v === "progress") loadProgress();
+  // Charts were laid out while hidden; rebuild them at the real width.
+  else if (state.cmp) renderComparison();
+}
+
+document.querySelectorAll<HTMLElement>(".tab").forEach((b) =>
+  b.addEventListener("click", () => setView(b.dataset.view as "analysis" | "progress")),
+);
+
 // ---------- language ----------
 
 function applyLanguage(l: Lang, persist = false) {
@@ -617,6 +633,7 @@ function applyLanguage(l: Lang, persist = false) {
   renderPotential();
   if (state.cmp) renderComparison();
   else renderReadout(null);
+  if (state.view === "progress") renderProgress($("progress"), state.progress, state.current?.id ?? null, openFromProgress);
 }
 
 $("lang").addEventListener("change", (e) => applyLanguage((e.target as HTMLSelectElement).value as Lang, true));

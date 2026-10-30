@@ -165,6 +165,21 @@ pub fn load_session(root: &Path, id: &str) -> Result<SessionData> {
     Ok(SessionData { meta, t, channels })
 }
 
+/// Reads a derived-data file (`<name>.json`) cached next to a session.
+/// Missing or unreadable caches return `None`; callers recompute.
+pub fn read_cache<T: serde::de::DeserializeOwned>(root: &Path, id: &str, name: &str) -> Option<T> {
+    let bytes = std::fs::read(session_dir(root, id).join(format!("{name}.json"))).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+pub fn write_cache<T: Serialize>(root: &Path, id: &str, name: &str, value: &T) -> Result<()> {
+    let dir = session_dir(root, id);
+    let tmp = dir.join(format!("{name}.json.tmp"));
+    std::fs::write(&tmp, serde_json::to_vec_pretty(value)?)?;
+    std::fs::rename(&tmp, dir.join(format!("{name}.json")))?;
+    Ok(())
+}
+
 pub fn delete_session(root: &Path, id: &str) -> Result<()> {
     std::fs::remove_dir_all(session_dir(root, id))?;
     Ok(())

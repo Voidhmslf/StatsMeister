@@ -144,6 +144,34 @@ async fn session_potential(
     Ok(sm_analysis::potential::session_potential(&data))
 }
 
+/// Track + car combinations with session counts and personal bests.
+#[tauri::command]
+async fn list_combos(
+    state: State<'_, AppState>,
+) -> Result<Vec<sm_analysis::progress::Combo>, String> {
+    let metas = sm_storage::list_sessions(&state.data_dir).map_err(err)?;
+    Ok(sm_analysis::progress::combos(&metas))
+}
+
+/// Session-by-session history of the track + car driven in `session`.
+#[tauri::command]
+async fn combo_progress(
+    state: State<'_, AppState>,
+    session: String,
+) -> Result<sm_analysis::progress::ComboProgress, String> {
+    let metas = sm_storage::list_sessions(&state.data_dir).map_err(err)?;
+    let meta = metas
+        .iter()
+        .find(|m| m.id == session)
+        .ok_or_else(|| format!("session {session} not found"))?;
+    let key = sm_analysis::progress::ComboKey::of(meta);
+    Ok(sm_analysis::progress::combo_progress(
+        &state.data_dir,
+        &metas,
+        &key,
+    ))
+}
+
 /// Exports to `Documents\StatsMeister Exports` and returns the file path.
 #[tauri::command]
 async fn export_csv(
@@ -270,6 +298,8 @@ pub fn run() {
             lap_stats,
             compare_laps,
             session_potential,
+            list_combos,
+            combo_progress,
             export_csv,
             import_replay,
             recorder_status,

@@ -7,6 +7,7 @@
 pub mod corners;
 pub mod hints;
 pub mod potential;
+pub mod progress;
 pub mod stats;
 
 use serde::Serialize;
