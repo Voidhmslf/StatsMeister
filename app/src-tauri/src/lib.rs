@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Channels sent to the UI for lap comparison charts and the track map.
 const COMPARE_CHANNELS: &[&str] = &[
@@ -320,6 +320,14 @@ pub fn run() {
         recording: Mutex::new(None),
     };
     tauri::Builder::default()
+        // A second launch brings the open window forward instead of starting
+        // another recorder on the same data.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .manage(state)
         .invoke_handler(tauri::generate_handler![
