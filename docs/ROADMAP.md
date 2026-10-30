@@ -16,10 +16,9 @@ headers.
 
 ## 2. Analysis
 
-- Corner detection (curvature from position or steering + speed minima), named
-  per track via community JSON files.
-- Per-corner metrics: braking point, peak brake pressure, trail braking,
-  minimum speed, throttle pickup point, exit speed, time lost/gained.
+- ~~Corner detection and per-corner time loss, min speed, braking and
+  throttle points~~ (done). Next: corner names per track via community JSON
+  files; peak brake pressure, trail braking, exit speed.
 - Sector times, theoretical best lap, consistency (std-dev per corner).
 - Tyre/brake temperature and pressure windows per stint.
 - Math channels (user formulas), histograms, XY scatter (e.g. g-g diagram).
