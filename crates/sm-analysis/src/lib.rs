@@ -5,6 +5,7 @@
 //! time, so the same corner lines up across laps of different pace.
 
 pub mod corners;
+pub mod hints;
 pub mod potential;
 pub mod stats;
 
@@ -218,6 +219,8 @@ pub struct LapComparison {
     /// `compare` elapsed time minus `reference` elapsed time; positive = compare lap is slower.
     pub delta: Option<Vec<f32>>,
     pub corners: Vec<corners::Corner>,
+    /// Why the compare lap loses time, biggest loss first.
+    pub hints: Vec<hints::Hint>,
 }
 
 /// Resamples one or two laps onto a common distance grid of roughly `step_m` metres.
@@ -272,8 +275,10 @@ pub fn compare_laps(
         compare: compare_series,
         delta,
         corners: Vec::new(),
+        hints: Vec::new(),
     };
     cmp.corners = corners::find_corners(&cmp);
+    cmp.hints = hints::corner_hints(&cmp.corners);
     cmp
 }
 

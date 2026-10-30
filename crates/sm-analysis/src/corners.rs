@@ -192,6 +192,7 @@ mod tests {
             compare: Some(series(speed, brake_b, elapsed_b)),
             delta: Some(delta),
             corners: Vec::new(),
+            hints: Vec::new(),
         };
         let corners = find_corners(&cmp);
         assert_eq!(corners.len(), 2);

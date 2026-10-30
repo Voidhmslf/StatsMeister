@@ -52,6 +52,26 @@ export interface Corner {
   delta_s: number | null;
 }
 
+/** Why lap B loses time in a corner; numbers depend on `kind`. */
+export interface Hint {
+  corner: number;
+  loss_s: number;
+  kind:
+    | "brakes_where_reference_lifts"
+    | "overdriven_entry"
+    | "early_braking"
+    | "slow_apex"
+    | "entry_speed_costs_exit"
+    | "fast_apex_slow_exit"
+    | "late_throttle"
+    | "slow_exit"
+    | "line";
+  later_m?: number;
+  earlier_m?: number;
+  slower_kmh?: number;
+  faster_kmh?: number;
+}
+
 export interface Comparison {
   x: number[];
   track_length_m: number;
@@ -59,6 +79,7 @@ export interface Comparison {
   compare: LapSeries | null;
   delta: number[] | null;
   corners: Corner[];
+  hints: Hint[];
 }
 
 export interface LapStats {

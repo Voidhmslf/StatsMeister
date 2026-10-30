@@ -1,5 +1,6 @@
 import uPlot from "uplot";
 import type { Comparison } from "./types";
+import { t } from "./i18n";
 
 export const COLOR_A = "#22d3ee";
 export const COLOR_B = "#f472b6";
@@ -9,7 +10,9 @@ const GRID = "rgba(255,255,255,0.06)";
 
 export interface ChartDef {
   key: string;
-  title: string;
+  /** i18n key of the chart title. */
+  title: "ch.delta" | "ch.speed" | "ch.throttle" | "ch.brake" | "ch.steer" | "ch.gear" | "ch.rpm" | "ch.g_lat";
+  /** Unit label, or an i18n key for translated units. */
   unit: string;
   height: number;
   /** Multiplier applied to raw values (e.g. 0..1 -> %). */
@@ -20,15 +23,15 @@ export interface ChartDef {
 }
 
 export const CHARTS: ChartDef[] = [
-  { key: "delta", title: "Delta B − A", unit: "s", height: 120, digits: 3 },
-  { key: "speed", title: "Speed", unit: "km/h", height: 200, digits: 1 },
-  { key: "throttle", title: "Throttle", unit: "%", height: 100, mul: 100, range: [0, 100], digits: 0 },
-  { key: "brake", title: "Brake", unit: "%", height: 100, mul: 100, range: [0, 100], digits: 0 },
-  { key: "steer_deg", title: "Steering", unit: "°", height: 110, digits: 0 },
-  { key: "steer", title: "Steering", unit: "%", height: 110, mul: 100, digits: 0 },
-  { key: "gear", title: "Gear", unit: "", height: 80, stepped: true, digits: 0 },
-  { key: "rpm", title: "RPM", unit: "", height: 110, digits: 0 },
-  { key: "g_lat", title: "Lateral G", unit: "g", height: 110, digits: 2 },
+  { key: "delta", title: "ch.delta", unit: "unit.s", height: 120, digits: 3 },
+  { key: "speed", title: "ch.speed", unit: "unit.kmh", height: 200, digits: 1 },
+  { key: "throttle", title: "ch.throttle", unit: "%", height: 100, mul: 100, range: [0, 100], digits: 0 },
+  { key: "brake", title: "ch.brake", unit: "%", height: 100, mul: 100, range: [0, 100], digits: 0 },
+  { key: "steer_deg", title: "ch.steer", unit: "°", height: 110, digits: 0 },
+  { key: "steer", title: "ch.steer", unit: "%", height: 110, mul: 100, digits: 0 },
+  { key: "gear", title: "ch.gear", unit: "", height: 80, stepped: true, digits: 0 },
+  { key: "rpm", title: "ch.rpm", unit: "", height: 110, digits: 0 },
+  { key: "g_lat", title: "ch.g_lat", unit: "g", height: 110, digits: 2 },
 ];
 
 export interface ChartSet {
@@ -68,7 +71,7 @@ export function buildCharts(
     wrap.className = "chart";
     const head = document.createElement("div");
     head.className = "chart-head";
-    head.innerHTML = `<span class="chart-title">${def.title}</span><span class="chart-unit">${def.unit}</span><span class="chart-vals" data-key="${def.key}"></span>`;
+    head.innerHTML = `<span class="chart-title">${t(def.title)}</span><span class="chart-unit">${def.unit.startsWith("unit.") ? t(def.unit as "unit.s") : def.unit}</span><span class="chart-vals" data-key="${def.key}"></span>`;
     wrap.append(head);
     root.append(wrap);
 
@@ -113,7 +116,7 @@ export function buildCharts(
           grid: { stroke: GRID },
           ticks: { stroke: GRID },
           size: isLast ? 30 : 6,
-          values: isLast ? (_u, v) => v.map((m) => `${m} m`) : () => [],
+          values: isLast ? (_u, v) => v.map((m) => `${m} ${t("unit.m")}`) : () => [],
         },
         {
           stroke: AXIS,

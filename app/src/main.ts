@@ -5,10 +5,12 @@ import { open } from "@tauri-apps/plugin-dialog";
 import "uplot/dist/uPlot.min.css";
 import "./style.css";
 import { buildCharts, updateChartHeaders, COLOR_A, COLOR_B, type ChartSet } from "./charts";
+import { applyStatic, getLang, isKey, lapsCount, setLang, t, type Lang } from "./i18n";
 import { TrackMap } from "./trackmap";
 import {
   isValidLap,
   type Comparison,
+  type Hint,
   type LapRef,
   type LapStats,
   type Potential,
@@ -29,6 +31,8 @@ const state = {
   charts: null as ChartSet | null,
   cursor: null as number | null,
   recording: false,
+  /** Re-evaluated on language change so the status line follows it. */
+  status: () => t("rec.idle"),
 };
 
 const map = new TrackMap($<HTMLCanvasElement>("map"));
@@ -47,7 +51,7 @@ function fmtDelta(s: number): string {
 
 function fmtDate(iso: string): string {
   const d = new Date(iso);
-  return isNaN(+d) ? iso : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return isNaN(+d) ? iso : d.toLocaleString(getLang(), { dateStyle: "medium", timeStyle: "short" });
 }
 
 function esc(s: string): string {
@@ -77,6 +81,11 @@ const sameRef = (x: LapRef | null, y: LapRef | null) =>
 
 const sessionById = (id: string) => state.sessions.find((s) => s.id === id);
 
+function setStatus(fn: () => string) {
+  state.status = fn;
+  $("rec-status").textContent = fn();
+}
+
 // ---------- sessions ----------
 
 async function loadSessions() {
@@ -91,7 +100,7 @@ async function loadSessions() {
 function renderSessions() {
   const ul = $("sessions");
   if (!state.sessions.length) {
-    ul.innerHTML = `<li class="muted">No sessions recorded yet</li>`;
+    ul.innerHTML = `<li class="muted">${t("sessions.empty")}</li>`;
     return;
   }
   ul.innerHTML = state.sessions
@@ -99,10 +108,10 @@ function renderSessions() {
       const best = s.laps.filter(isValidLap).reduce((m, l) => Math.min(m, l.time_s), Infinity);
       const laps = s.laps.filter((l) => l.complete).length;
       return `<li class="session ${state.current?.id === s.id ? "active" : ""}" data-id="${esc(s.id)}">
-        <div class="s-top"><span class="s-track">${esc(s.track || "Unknown track")}</span>
-          ${s.finished ? `<span class="s-best">${fmtLap(best)}</span>` : `<span class="badge live">REC</span>`}</div>
-        <div class="s-car">${esc(s.car || "Unknown car")}</div>
-        <div class="s-meta">${esc(s.game)} · ${fmtDate(s.started_at)} · ${laps} laps</div>
+        <div class="s-top"><span class="s-track">${esc(s.track || t("sessions.unknownTrack"))}</span>
+          ${s.finished ? `<span class="s-best">${fmtLap(best)}</span>` : `<span class="badge live">${t("sessions.rec")}</span>`}</div>
+        <div class="s-car">${esc(s.car || t("sessions.unknownCar"))}</div>
+        <div class="s-meta">${esc(s.game)} · ${fmtDate(s.started_at)} · ${lapsCount(laps)}</div>
       </li>`;
     })
     .join("");
@@ -154,28 +163,30 @@ async function selectSession(id: string, autoPick = true) {
 function renderLaps() {
   const s = state.current;
   const table = $("laps");
-  $("laps-title").textContent = s ? `Laps · ${s.track}` : "Laps";
+  $("laps-title").textContent = s ? t("laps.titleTrack", { track: s.track }) : t("laps.title");
   if (!s) {
     table.innerHTML = "";
     return;
   }
   if (!s.finished) {
-    table.innerHTML = `<tr><td class="muted">Session is still being recorded (or was interrupted).</td></tr>`;
+    table.innerHTML = `<tr><td class="muted">${t("laps.recording")}</td></tr>`;
     return;
   }
   const best = s.laps.filter(isValidLap).reduce((m, l) => Math.min(m, l.time_s), Infinity);
   table.innerHTML =
-    `<tr><th>#</th><th>Time</th><th>Δ best</th><th></th><th></th></tr>` +
+    `<tr><th>#</th><th>${t("laps.time")}</th><th>${t("laps.deltaBest")}</th><th></th><th></th></tr>` +
     s.laps
       .map((l) => {
         const ref = { session: s.id, lap: l.number };
-        const flags = [!l.complete && "partial", l.in_pit && "pit", l.cut && "cut"].filter(Boolean).join(" ");
+        const flags = [!l.complete && t("laps.partial"), l.in_pit && t("laps.pit"), l.cut && t("laps.cut")]
+          .filter(Boolean)
+          .join(" ");
         const isBest = isValidLap(l) && l.time_s === best;
         const d = isValidLap(l) && Number.isFinite(best) ? fmtDelta(l.time_s - best) : "";
         return `<tr class="lap ${isValidLap(l) ? "" : "invalid"} ${isBest ? "best" : ""}" data-lap="${l.number}">
           <td>${l.number}</td>
           <td class="num">${fmtLap(l.time_s)}</td>
-          <td class="num dim">${isBest ? "best" : d}</td>
+          <td class="num dim">${isBest ? t("laps.best") : d}</td>
           <td class="flags">${flags}</td>
           <td class="pick">
             <button class="ab a ${sameRef(state.a, ref) ? "on" : ""}" data-slot="a">A</button>
@@ -211,12 +222,21 @@ async function updateComparison() {
       state.stats.set(r.session, await call<LapStats[]>("lap_stats", { session: r.session }));
     }
   }
+  renderComparison();
+}
+
+/** Redraws everything that depends on the current comparison (no refetch). */
+function renderComparison() {
+  if (!state.cmp) return;
   state.charts?.destroy();
   state.cursor = null;
+  lastCursor = undefined;
   state.charts = buildCharts($("charts"), state.cmp, onCursor);
   renderSummary();
+  renderCoach();
   renderCorners();
   renderStats();
+  map.render(null, null);
   onCursor(null);
 }
 
@@ -237,6 +257,16 @@ function lapLabel(r: LapRef) {
   return { s, lap };
 }
 
+function zoomToCorner(number: number) {
+  const cmp = state.cmp;
+  const c = cmp?.corners.find((c) => c.number === number);
+  if (!cmp || !c || !state.charts) return;
+  $("corners").querySelectorAll("tr.sel").forEach((r) => r.classList.remove("sel"));
+  $("corners").querySelector(`tr[data-corner="${number}"]`)?.classList.add("sel");
+  // Setting the scale on one plot propagates to the others via the sync hook.
+  state.charts.plots[0]?.setScale("x", { min: cmp.x[c.start], max: cmp.x[c.end] });
+}
+
 function renderSummary() {
   const el = $("summary");
   if (!state.a || !state.cmp) {
@@ -248,7 +278,7 @@ function renderSummary() {
     return `<div class="chip ${cls}" style="--c:${color}">
       <span class="chip-tag">${cls.toUpperCase()}</span>
       <span class="chip-time">${fmtLap(lap?.time_s ?? 0)}</span>
-      <span class="chip-sub">Lap ${r.lap} · ${esc(s?.car ?? "")}<br>${esc(s ? fmtDate(s.started_at) : "")}</span>
+      <span class="chip-sub">${t("summary.lap", { n: r.lap })} · ${esc(s?.car ?? "")}<br>${esc(s ? fmtDate(s.started_at) : "")}</span>
     </div>`;
   };
   let html = chip(state.a, "a", COLOR_A);
@@ -256,17 +286,62 @@ function renderSummary() {
     html += chip(state.b, "b", COLOR_B);
     // Use the recorded lap times; the delta trace is integrated from samples and can be a few ms off.
     const total = (lapLabel(state.b).lap?.time_s ?? 0) - (lapLabel(state.a).lap?.time_s ?? 0);
-    html += `<div class="gap ${total > 0 ? "loss" : "gain"}"><span>Gap</span><b>${fmtDelta(total)} s</b></div>`;
+    html += `<div class="gap ${total > 0 ? "loss" : "gain"}"><span>${t("summary.gap")}</span><b>${fmtDelta(total)} ${t("unit.s")}</b></div>`;
   } else {
-    html += `<div class="hint">Pick a <b class="b">B</b> lap to compare — from this or any other session on the same track.</div>`;
+    html += `<div class="hint">${t("summary.pickB")}</div>`;
   }
-  html += `<div class="summary-actions"><button id="export-lap" class="btn btn-ghost">Export lap A (CSV)</button></div>`;
+  html += `<div class="summary-actions"><button id="export-lap" class="btn btn-ghost">${t("summary.exportLap")}</button></div>`;
   el.innerHTML = html;
   $("export-lap").onclick = async () => {
     const path = await call<string>("export_csv", { session: state.a!.session, lap: state.a!.lap });
-    toast(`Saved ${path}`);
+    toast(t("toast.exported", { path }));
   };
 }
+
+// ---------- coach ----------
+
+/** Hint numbers rounded for reading: metres and km/h without false precision. */
+function hintText(h: Hint): string {
+  const key = `hint.${h.kind}`;
+  if (!isKey(key)) return h.kind;
+  const params: Record<string, string> = {};
+  for (const [k, v] of Object.entries(h)) {
+    if (typeof v === "number" && k !== "corner" && k !== "loss_s") {
+      params[k] = k.endsWith("_m") ? String(Math.round(v)) : v.toFixed(1);
+    }
+  }
+  return t(key, params);
+}
+
+function renderCoach() {
+  const el = $("coach");
+  const cmp = state.cmp;
+  if (!cmp?.compare) {
+    el.innerHTML = "";
+    return;
+  }
+  // One card per corner, biggest loss first; hints arrive sorted that way.
+  const byCorner = new Map<number, Hint[]>();
+  for (const h of cmp.hints) byCorner.set(h.corner, [...(byCorner.get(h.corner) ?? []), h]);
+  const cards = [...byCorner.entries()]
+    .slice(0, 4)
+    .map(
+      ([corner, hints]) => `<div class="coach-card" data-corner="${corner}">
+        <div class="coach-head"><b>T${corner}</b><span class="loss">${t("coach.lost", { s: hints[0].loss_s.toFixed(3) })}</span></div>
+        ${hints.map((h) => `<p>${hintText(h)}</p>`).join("")}
+      </div>`,
+    )
+    .join("");
+  el.innerHTML = `<div class="coach-title"><h2>${t("coach.title")}</h2><span class="muted">${t("coach.sub")}</span></div>
+    ${cards ? `<div class="coach-cards">${cards}</div>` : `<div class="muted">${t("coach.noLoss")}</div>`}`;
+}
+
+$("coach").addEventListener("click", (e) => {
+  const card = (e.target as HTMLElement).closest<HTMLElement>(".coach-card");
+  if (card) zoomToCorner(Number(card.dataset.corner));
+});
+
+// ---------- potential ----------
 
 function renderPotential() {
   const panel = $("potential-panel");
@@ -281,10 +356,10 @@ function renderPotential() {
     .sort((x, y) => y.reference_s - y.best_s - (x.reference_s - x.best_s))
     .map((seg) => {
       const g = Math.max(0, seg.reference_s - seg.best_s);
-      return `<tr data-corner="${seg.corner}" data-lap="${seg.best_lap}" title="Compare lap ${p.reference_lap} with lap ${seg.best_lap} in T${seg.corner}">
+      return `<tr data-corner="${seg.corner}" data-lap="${seg.best_lap}" title="${t("potential.rowTitle", { a: p.reference_lap, b: seg.best_lap, c: seg.corner })}">
         <td class="cn">T${seg.corner}</td>
         <td class="num ${g > 0.0005 ? "gain" : "dim"}">${g > 0.0005 ? `−${g.toFixed(3)}` : "—"}</td>
-        <td class="num dim">${g > 0.0005 ? `lap ${seg.best_lap}` : ""}</td>
+        <td class="num dim">${g > 0.0005 ? t("potential.lap", { n: seg.best_lap }) : ""}</td>
         <td class="spread"><span style="width:${((seg.stdev_s / worstSpread) * 100).toFixed(0)}%"></span></td>
         <td class="num dim">±${seg.stdev_s.toFixed(2)}</td>
       </tr>`;
@@ -293,11 +368,11 @@ function renderPotential() {
   $("potential").innerHTML = `
     <div class="pot-head">
       <span class="pot-time">${fmtLap(p.theoretical_best_s)}</span>
-      <span class="pot-gain">−${gain.toFixed(3)} s</span>
+      <span class="pot-gain">−${gain.toFixed(3)} ${t("unit.s")}</span>
     </div>
-    <div class="pot-sub">Best segments from laps ${p.laps_used.join(", ")}. Click a corner to see how it was done.</div>
+    <div class="pot-sub">${t("potential.sub", { laps: p.laps_used.join(", ") })}</div>
     <table class="pot-table">
-      <tr><th></th><th class="num">Reserve</th><th class="num">From</th><th colspan="2">Consistency</th></tr>
+      <tr><th></th><th class="num">${t("potential.reserve")}</th><th class="num">${t("potential.from")}</th><th colspan="2">${t("potential.consistency")}</th></tr>
       ${rows}
     </table>`;
 }
@@ -312,14 +387,10 @@ $("potential").addEventListener("click", async (e) => {
   state.b = lap !== p.reference_lap ? { session: s.id, lap } : null;
   renderLaps();
   await updateComparison();
-  const c = state.cmp?.corners.find((c) => c.number === Number(row.dataset.corner));
-  if (c && state.cmp && state.charts) {
-    state.charts.plots[0]?.setScale("x", { min: state.cmp.x[c.start], max: state.cmp.x[c.end] });
-    $("corners")
-      .querySelector(`tr[data-corner="${c.number}"]`)
-      ?.classList.add("sel");
-  }
+  zoomToCorner(Number(row.dataset.corner));
 });
+
+// ---------- corners ----------
 
 function renderCorners() {
   const el = $("corners");
@@ -329,25 +400,31 @@ function renderCorners() {
     return;
   }
   const hasB = !!cmp.compare;
+  const m = t("unit.m");
   const worst = Math.max(0.05, ...cmp.corners.map((c) => Math.abs(c.delta_s ?? 0)));
   const sp = (v: number | null) => (v == null ? "–" : v.toFixed(0));
   // B relative to A along the lap: "+12 m" = B does it 12 m later.
   const shift = (p: [number | null, number | null]) => {
     const [a, b] = p;
     if (a == null && b == null) return "";
-    if (a == null) return `<span class="dim">B only</span>`;
-    if (b == null) return `<span class="dim">A only</span>`;
+    if (a == null) return `<span class="dim">${t("corners.bOnly")}</span>`;
+    if (b == null) return `<span class="dim">${t("corners.aOnly")}</span>`;
     const d = Math.round(b - a);
-    return d === 0 ? "same" : `${d > 0 ? "+" : "−"}${Math.abs(d)} m`;
+    return d === 0 ? t("corners.same") : `${d > 0 ? "+" : "−"}${Math.abs(d)} ${m}`;
   };
+  const hintsFor = (n: number) =>
+    cmp.hints
+      .filter((h) => h.corner === n)
+      .map(hintText)
+      .join("\n");
   const rows = cmp.corners
     .map((c) => {
       const d = c.delta_s ?? 0;
       const w = (Math.abs(d) / worst) * 100;
       const minDiff = c.min_speed[0] != null && c.min_speed[1] != null ? c.min_speed[1] - c.min_speed[0] : null;
-      return `<tr data-corner="${c.number}">
+      return `<tr data-corner="${c.number}" title="${esc(hintsFor(c.number))}">
         <td class="cn">T${c.number}</td>
-        <td class="num dim">${Math.round(c.apex_m)} m</td>
+        <td class="num dim">${Math.round(c.apex_m)} ${m}</td>
         ${hasB ? `<td class="num ${d > 0.005 ? "loss" : d < -0.005 ? "gain" : ""}">${fmtDelta(d)}</td>
         <td class="bar"><span class="${d > 0 ? "loss" : "gain"}" style="width:${w.toFixed(0)}%"></span></td>` : ""}
         <td class="num">${sp(c.min_speed[0])}${hasB ? ` / ${sp(c.min_speed[1])}` : ""}</td>
@@ -358,53 +435,48 @@ function renderCorners() {
     })
     .join("");
   el.innerHTML = `<table class="corner-table">
-    <tr><th>Corner</th><th class="num">Apex</th>${hasB ? `<th class="num">B vs A</th><th></th>` : ""}
-      <th class="num">Min speed${hasB ? " A / B" : ""}</th>${hasB ? `<th class="num">Δ min</th><th class="num">Brake point B</th><th class="num">Full throttle B</th>` : ""}</tr>
+    <tr><th>${t("corners.corner")}</th><th class="num">${t("corners.apex")}</th>${hasB ? `<th class="num">${t("corners.bVsA")}</th><th></th>` : ""}
+      <th class="num">${t("corners.minSpeed")}${hasB ? " A / B" : ""}</th>${hasB ? `<th class="num">${t("corners.deltaMin")}</th><th class="num">${t("corners.brakeB")}</th><th class="num">${t("corners.throttleB")}</th>` : ""}</tr>
     ${rows}</table>`;
 }
 
 $("corners").addEventListener("click", (e) => {
   const row = (e.target as HTMLElement).closest<HTMLElement>("tr[data-corner]");
-  const cmp = state.cmp;
-  if (!row || !cmp || !state.charts) return;
-  const c = cmp.corners.find((c) => c.number === Number(row.dataset.corner));
-  if (!c) return;
-  $("corners").querySelectorAll("tr.sel").forEach((r) => r.classList.remove("sel"));
-  row.classList.add("sel");
-  // Setting the scale on one plot propagates to the others via the sync hook.
-  state.charts.plots[0]?.setScale("x", { min: cmp.x[c.start], max: cmp.x[c.end] });
+  if (row) zoomToCorner(Number(row.dataset.corner));
 });
 
-const READOUT: [string, string, number, number][] = [
-  // label, channel, multiplier, digits
-  ["Speed", "speed", 1, 1],
-  ["Throttle %", "throttle", 100, 0],
-  ["Brake %", "brake", 100, 0],
-  ["Gear", "gear", 1, 0],
-  ["RPM", "rpm", 1, 0],
-  ["Steer °", "steer_deg", 1, 0],
-  ["Lat G", "g_lat", 1, 2],
-  ["Long G", "g_long", 1, 2],
+// ---------- inspector ----------
+
+const READOUT: ["ch.speed" | "ch.throttle" | "ch.brake" | "ch.gear" | "ch.rpm" | "ch.steer" | "ch.g_lat" | "ch.g_long", string, number, number, string][] = [
+  // label, channel, multiplier, digits, suffix
+  ["ch.speed", "speed", 1, 1, ""],
+  ["ch.throttle", "throttle", 100, 0, " %"],
+  ["ch.brake", "brake", 100, 0, " %"],
+  ["ch.gear", "gear", 1, 0, ""],
+  ["ch.rpm", "rpm", 1, 0, ""],
+  ["ch.steer", "steer_deg", 1, 0, "°"],
+  ["ch.g_lat", "g_lat", 1, 2, ""],
+  ["ch.g_long", "g_long", 1, 2, ""],
 ];
 
 function renderReadout(idx: number | null) {
   const cmp = state.cmp;
   const el = $("readout");
   if (!cmp || idx == null) {
-    el.innerHTML = `<tr><td class="muted">Hover the charts</td></tr>`;
+    el.innerHTML = `<tr><td class="muted">${t("cursor.hover")}</td></tr>`;
     return;
   }
   const hasB = !!cmp.compare;
   const head = `<tr><th></th><th style="color:${COLOR_A}">A</th>${hasB ? `<th style="color:${COLOR_B}">B</th>` : ""}</tr>`;
   const row = (label: string, a: string, b: string) =>
     `<tr><td>${label}</td><td class="num">${a}</td>${hasB ? `<td class="num">${b}</td>` : ""}</tr>`;
-  let html = head + row("Distance", `${Math.round(cmp.x[idx])} m`, "");
-  html += row("Time", cmp.reference.elapsed[idx].toFixed(2), cmp.compare ? cmp.compare.elapsed[idx].toFixed(2) : "");
-  for (const [label, ch, m, dg] of READOUT) {
+  let html = head + row(t("cursor.distance"), `${Math.round(cmp.x[idx])} ${t("unit.m")}`, "");
+  html += row(t("cursor.time"), cmp.reference.elapsed[idx].toFixed(2), cmp.compare ? cmp.compare.elapsed[idx].toFixed(2) : "");
+  for (const [label, ch, m, dg, suffix] of READOUT) {
     const a = cmp.reference.channels[ch]?.[idx];
     const b = cmp.compare?.channels[ch]?.[idx];
     if (a == null) continue;
-    html += row(label, (a * m).toFixed(dg), b == null ? "" : (b * m).toFixed(dg));
+    html += row(t(label) + suffix, (a * m).toFixed(dg), b == null ? "" : (b * m).toFixed(dg));
   }
   el.innerHTML = html;
 }
@@ -418,28 +490,28 @@ function renderStats() {
     el.innerHTML = "";
     return;
   }
-  const rows: [string, (s: LapStats) => string][] = [
-    ["Lap time", (s) => fmtLap(s.time_s)],
-    ["Max speed", (s) => s.max_speed_kmh.toFixed(1)],
-    ["Avg speed", (s) => s.avg_speed_kmh.toFixed(1)],
-    ["Full throttle", (s) => `${s.full_throttle_pct.toFixed(1)}%`],
-    ["Braking", (s) => `${s.braking_pct.toFixed(1)}%`],
-    ["Coasting", (s) => `${s.coasting_pct.toFixed(1)}%`],
-    ["Gear changes", (s) => String(s.gear_changes)],
-    ["Max lat G", (s) => s.max_g_lat.toFixed(2)],
-    ["Max brake G", (s) => s.max_g_brake.toFixed(2)],
+  const rows: [Parameters<typeof t>[0], (s: LapStats) => string][] = [
+    ["st.lapTime", (s) => fmtLap(s.time_s)],
+    ["st.maxSpeed", (s) => s.max_speed_kmh.toFixed(1)],
+    ["st.avgSpeed", (s) => s.avg_speed_kmh.toFixed(1)],
+    ["st.fullThrottle", (s) => `${s.full_throttle_pct.toFixed(1)}%`],
+    ["st.braking", (s) => `${s.braking_pct.toFixed(1)}%`],
+    ["st.coasting", (s) => `${s.coasting_pct.toFixed(1)}%`],
+    ["st.gearChanges", (s) => String(s.gear_changes)],
+    ["st.maxLatG", (s) => s.max_g_lat.toFixed(2)],
+    ["st.maxBrakeG", (s) => s.max_g_brake.toFixed(2)],
   ];
   el.innerHTML =
     `<tr><th></th><th style="color:${COLOR_A}">A</th>${b ? `<th style="color:${COLOR_B}">B</th>` : ""}</tr>` +
     rows
-      .map(([label, f]) => `<tr><td>${label}</td><td class="num">${f(a)}</td>${b ? `<td class="num">${f(b)}</td>` : ""}</tr>`)
+      .map(([label, f]) => `<tr><td>${t(label)}</td><td class="num">${f(a)}</td>${b ? `<td class="num">${f(b)}</td>` : ""}</tr>`)
       .join("");
 }
 
 $("export-session").addEventListener("click", async () => {
   if (!state.current) return;
   const path = await call<string>("export_csv", { session: state.current.id, lap: null });
-  toast(`Saved ${path}`);
+  toast(t("toast.exported", { path }));
 });
 
 $("refresh").addEventListener("click", () => loadSessions());
@@ -447,9 +519,9 @@ $("refresh").addEventListener("click", () => loadSessions());
 // ---------- replay import ----------
 
 async function importReplay(path: string) {
-  toast(`Importing ${path.split(/[\\/]/).pop()}…`);
+  toast(t("toast.importing", { file: path.split(/[\\/]/).pop() ?? path }));
   const meta = await call<Session>("import_replay", { path });
-  toast(`Imported ${meta.track}: ${meta.laps.filter(isValidLap).length} valid laps`);
+  toast(t("toast.imported", { track: meta.track, laps: lapsCount(meta.laps.filter(isValidLap).length) }));
   state.a = null;
   state.b = null;
   await loadSessions();
@@ -459,7 +531,7 @@ async function importReplay(path: string) {
 $("import").addEventListener("click", async () => {
   const path = await open({
     multiple: false,
-    filters: [{ name: "Assetto Corsa replay", extensions: ["acreplay"] }],
+    filters: [{ name: t("dialog.replay"), extensions: ["acreplay"] }],
   });
   if (typeof path === "string") await importReplay(path);
 });
@@ -474,45 +546,47 @@ getCurrentWebview().onDragDropEvent(async ({ payload: p }) => {
 
 // ---------- recorder ----------
 
-function setRecording(on: boolean, status?: string) {
+function setRecording(on: boolean) {
   state.recording = on;
-  $("rec-label").textContent = on ? "Stop" : "Record";
+  $("rec-label").dataset.i18n = on ? "app.stop" : "app.record";
+  $("rec-label").textContent = on ? t("app.stop") : t("app.record");
   $("rec-btn").classList.toggle("on", on);
   $<HTMLSelectElement>("source").disabled = on;
-  if (status !== undefined) $("rec-status").textContent = status;
 }
 
 $("rec-btn").addEventListener("click", async () => {
   if (state.recording) {
-    $("rec-status").textContent = "Stopping…";
+    setStatus(() => t("rec.stopping"));
     await call("stop_recording");
-    setRecording(false, "Idle");
+    setRecording(false);
+    setStatus(() => t("rec.idle"));
     loadSessions();
   } else {
     const source = $<HTMLSelectElement>("source").value;
     await call("start_recording", { source });
-    setRecording(true, "Starting…");
+    setRecording(true);
+    setStatus(() => t("rec.starting"));
   }
 });
 
 listen<RecorderEvent>("recorder", ({ payload: e }) => {
-  const status = $("rec-status");
   switch (e.type) {
     case "waiting":
-      status.textContent = "Waiting for game…";
+      setStatus(() => t("rec.waiting"));
       break;
     case "session_started":
-      status.textContent = `● ${e.info.track} · ${e.info.car}`;
+      setStatus(() => `● ${e.info.track} · ${e.info.car}`);
       loadSessions();
       break;
     case "lap_completed":
       if (e.lap.complete) {
-        status.textContent = `● Lap ${e.lap.number}: ${fmtLap(e.lap.time_s)}`;
-        toast(`Lap ${e.lap.number}: ${fmtLap(e.lap.time_s)}${isValidLap(e.lap) ? "" : " (invalid)"}`);
+        const params = { n: e.lap.number, time: fmtLap(e.lap.time_s) };
+        setStatus(() => t("rec.lap", params));
+        toast(t(isValidLap(e.lap) ? "toast.lap" : "toast.lapInvalid", params));
       }
       break;
     case "session_saved":
-      toast(`Session saved: ${e.laps} laps`);
+      toast(t("toast.saved", { laps: lapsCount(e.laps) }));
       state.stats.delete(e.id);
       state.potential.delete(e.id);
       loadSessions();
@@ -526,16 +600,36 @@ listen<RecorderEvent>("recorder", ({ payload: e }) => {
   }
 });
 
-listen("recorder-stopped", () => setRecording(false, "Idle"));
+listen("recorder-stopped", () => {
+  setRecording(false);
+  setStatus(() => t("rec.idle"));
+});
+
+// ---------- language ----------
+
+function applyLanguage(l: Lang, persist = false) {
+  setLang(l, persist);
+  $<HTMLSelectElement>("lang").value = l;
+  applyStatic();
+  $("rec-status").textContent = state.status();
+  renderSessions();
+  renderLaps();
+  renderPotential();
+  if (state.cmp) renderComparison();
+  else renderReadout(null);
+}
+
+$("lang").addEventListener("change", (e) => applyLanguage((e.target as HTMLSelectElement).value as Lang, true));
 
 // ---------- init ----------
 
 (async () => {
+  applyLanguage(getLang());
   const st = await call<{ running: boolean; source: string | null }>("recorder_status");
   if (st.running) {
     if (st.source) $<HTMLSelectElement>("source").value = st.source;
-    setRecording(true, "Recording…");
+    setRecording(true);
+    setStatus(() => t("rec.recording"));
   }
-  renderReadout(null);
   await loadSessions();
 })();
