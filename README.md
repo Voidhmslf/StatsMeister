@@ -2,9 +2,9 @@
 
 # StatsMeister
 
-**Open-source telemetry recorder and lap analyser for sim racing.**
+**Бесплатная телеметрия для симрейсинга с открытым кодом.**
 
-Record your laps, overlay them on distance and see exactly which corner costs you time — and why.
+Записывает круги, накладывает их друг на друга по дистанции и показывает, в каком повороте теряется время и почему.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Rust](https://img.shields.io/badge/Rust-2024-orange.svg)
@@ -14,62 +14,46 @@ Record your laps, overlay them on distance and see exactly which corner costs yo
 
 </div>
 
-![StatsMeister comparing two laps of a Porsche 992 GT3 RS](docs/images/screenshot.png)
+![Сравнение двух кругов на Porsche 992 GT3 RS](docs/images/screenshot.png)
 
-## Why
+## Зачем
 
-Tools like MoTeC i2 are powerful but built for engineers. StatsMeister aims at the
-sim racer who wants to get a bit faster every day: open a session, and the app
-already tells you where the time went — late braking that didn't pay off, a slow
-apex, throttle applied too late.
+MoTeC i2 умеет почти всё, но сделан для инженеров: чтобы найти, где ты проиграл полсекунды, надо полчаса крутить графики. StatsMeister я пишу для тех, кто катает каждый день и хочет понемногу ехать быстрее. Открываешь сессию, и программа сама показывает, куда ушло время: затормозил позже, а апекс прошёл медленнее, или газ открыл на 20 метров позже, чем на лучшем круге.
 
-## Features
+## Что умеет
 
-- **Live recording** from Assetto Corsa and Assetto Corsa Competizione via shared memory
-  (~333 Hz, ~70 channels: inputs, speed, g-forces, tyre temps/pressures/wear, brake temps,
-  suspension, wheel slip and loads, position).
-- **Assetto Corsa replay import** — drop an `.acreplay` file onto the window to analyse
-  laps you drove before installing StatsMeister.
-- **Automatic lap detection** with the game's official lap times; out laps, pit laps and
-  track-limit cuts are flagged.
-- **Lap comparison on distance** — any two laps, even from different sessions, aligned by
-  track position, with a running time delta.
-- **Corner-by-corner breakdown** — corners are detected automatically; for each one you get
-  time gained/lost, minimum speed, braking point and full-throttle point. Click a corner to
-  zoom every chart to it.
-- **Track map** coloured by where the compared lap gains (green) or loses (red) time.
-- **Synced charts** (speed, throttle, brake, steering, gear, RPM, lateral G) with a shared
-  cursor and zoom, plus a value readout and per-lap statistics.
-- **Open data** — sessions are stored as Parquet + JSON and can be exported to CSV.
-- **Command line tool** for recording, importing, comparing and exporting without the UI.
-- **Demo source** that simulates a car on a made-up circuit, so you can try everything
-  without a game.
+- Пишет телеметрию прямо во время езды из Assetto Corsa и ACC через shared memory: около 333 раз в секунду, примерно 70 каналов. Там педали, скорость, перегрузки, температура, давление и износ шин, температура тормозов, подвеска, проскальзывание и нагрузка на каждое колесо, позиция на трассе.
+- Импортирует реплеи Assetto Corsa (`.acreplay`). Перетащил файл на окно, и старые заезды можно разбирать так же, как новые.
+- Сам находит круги и берёт время круга из игры. Выезд, круги с заездом в пит и срезки помечаются.
+- Сравнивает любые два круга, даже из разных сессий. Круги выравниваются по положению на трассе, а не по времени, поэтому одинаковые повороты совпадают на графике. Сверху идёт дельта: сколько круг B проигрывает кругу A в каждой точке.
+- Разбирает круг по поворотам. Повороты находятся автоматически, и для каждого видно, сколько времени потеряно или выиграно, минимальную скорость, где началось торможение и где открыт полный газ. Клик по повороту приближает все графики к нему.
+- Рисует карту трассы: зелёным участки, где круг B быстрее, красным, где медленнее.
+- Показывает графики скорости, газа, тормоза, руля, передачи, оборотов и боковой перегрузки. Курсор и зум у них общие, рядом значения в точке курсора и статистика кругов.
+- Хранит данные в открытом формате (Parquet + JSON), любой круг или сессию можно выгрузить в CSV.
+- Работает из командной строки: запись, импорт, сравнение и экспорт без интерфейса.
+- Есть демо-режим с виртуальной машиной на выдуманной трассе, чтобы попробовать всё без игры.
 
-## Supported games
+## Какие игры поддерживаются
 
-| Game | Live recording | File import |
+| Игра | Запись во время езды | Импорт файлов |
 |---|---|---|
-| Assetto Corsa | ✅ shared memory | ✅ `.acreplay` (format v16) |
-| Assetto Corsa Competizione | ✅ shared memory | — |
-| iRacing | planned | planned (`.ibt`) |
-| Automobilista 2 | planned | — |
-| Le Mans Ultimate / rFactor 2 | planned | — |
+| Assetto Corsa | ✅ shared memory | ✅ `.acreplay` (формат v16) |
+| Assetto Corsa Competizione | ✅ shared memory | нет |
+| iRacing | в планах | в планах (`.ibt`) |
+| Automobilista 2 | в планах | нет |
+| Le Mans Ultimate / rFactor 2 | в планах | нет |
 
-Replays contain less data than live recording: no tyre temperatures or pressures, fuel,
-ABS/TC activity or track-limit information, and only the replay's sample rate (about 33 Hz
-at default quality). Record live for practice; use import for older laps.
+В реплеях меньше данных, чем при живой записи. Нет температуры и давления шин, топлива, срабатываний ABS и TC, информации о срезках, а частота ограничена качеством реплея: при стандартных настройках около 33 кадров в секунду. Тренировки лучше записывать вживую, а импорт оставить для старых заездов.
 
-## Getting started
+## Установка и запуск
 
-### Requirements
+Понадобятся:
 
-- Windows 10/11 (WebView2 is preinstalled)
-- [Rust](https://rustup.rs) stable (MSVC toolchain) and Visual Studio Build Tools
-- [Node.js](https://nodejs.org) 20+
+- Windows 10 или 11 (WebView2 там уже есть);
+- [Rust](https://rustup.rs), стабильная версия с тулчейном MSVC, и Visual Studio Build Tools;
+- [Node.js](https://nodejs.org) 20 или новее.
 
-See the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) if a build fails.
-
-### Run the app
+Если сборка падает, проверьте [требования Tauri](https://v2.tauri.app/start/prerequisites/).
 
 ```bash
 git clone https://github.com/Voidhmslf/StatsMeister.git
@@ -78,38 +62,33 @@ npm install
 npm run tauri dev
 ```
 
-Build an installer with `npm run tauri build` (output in `target/release/bundle`).
+Установщик собирается командой `npm run tauri build`, готовый файл появится в `target/release/bundle`.
 
-### Use it
+## Как пользоваться
 
-1. **Record:** pick *Auto-detect* (or a game), press **Record**, then drive. Each stint on
-   track becomes a session; laps appear as you complete them.
-2. **Or import:** press **Import** or drag an `.acreplay` file onto the window. AC saves
-   replays in `Documents\Assetto Corsa\replay`; set *Replay quality* to the maximum in AC's
-   settings for the best resolution.
-3. **Analyse:** the best lap is selected as **A** and a recent representative lap as **B**.
-   Read the corner table top to bottom, click the corners where you lose the most, and
-   compare braking points, minimum speed and throttle application in the charts.
+1. Запись. Выберите «Auto-detect» или конкретную игру, нажмите Record и езжайте. Каждый выезд на трассу сохраняется отдельной сессией, круги появляются в списке по мере прохождения.
+2. Импорт. Нажмите Import или перетащите `.acreplay` на окно. AC хранит реплеи в `Documents\Assetto Corsa\replay`. Поставьте в настройках игры максимальное качество реплеев, тогда данных будет больше.
+3. Разбор. Лучший круг сразу выбирается как A, а как B берётся последний круг, который не хуже лучшего больше чем на 3 %. Смотрите таблицу поворотов сверху вниз. Кликните поворот, где теряется больше всего, и на графиках будет видно, что пошло не так: торможение, скорость в апексе или газ на выходе.
 
-No game at hand? Choose **Demo** and press **Record**.
+Игры под рукой нет? Выберите Demo и нажмите Record.
 
-## Command line
+## Командная строка
 
 ```bash
 cargo run -p sm-cli -- --help
 ```
 
 ```bash
-statsmeister record                          # auto-detect a running game, Ctrl+C to stop
+statsmeister record                          # найдёт запущенную игру, остановка по Ctrl+C
 statsmeister record --source demo --fast --laps 5
 statsmeister import "sokol hotlap.acreplay"
 statsmeister list
 statsmeister laps latest
-statsmeister compare latest:best latest:3    # per-corner breakdown
+statsmeister compare latest:best latest:3    # разбор по поворотам
 statsmeister export latest --lap 3 -o lap3.csv
 ```
 
-Example `compare` output:
+Так выглядит вывод `compare` на реальном реплее:
 
 ```text
 A = lap 4 1:50.810   B = lap 5 1:52.178   track ≈ 4376 m
@@ -120,39 +99,37 @@ T9     3719 m  -0.161    75.6 /  82.9    same                    3 m earlier
 ...
 ```
 
-## Data
+В T1 круг B тормозит на 7 метров позже, но проходит апекс медленнее и позже открывает газ. Позднее торможение тут не окупилось.
 
-Sessions live in `%APPDATA%\StatsMeister\data\sessions\<session id>\` (override with the
-`STATSMEISTER_DATA` environment variable):
+## Где лежат данные
+
+Сессии сохраняются в `%APPDATA%\StatsMeister\data\sessions\<id сессии>\`. Путь можно поменять переменной окружения `STATSMEISTER_DATA`.
 
 ```text
-meta.json           session info, channel list, laps with times and flags
-telemetry.parquet   column "t" (seconds) + one float column per channel, zstd-compressed
+meta.json           описание сессии, список каналов, круги со временем и пометками
+telemetry.parquet   колонка "t" (секунды) и по колонке на каждый канал, сжатие zstd
 ```
 
-The Parquet files open directly in DuckDB, pandas, Polars or any other Parquet reader.
-Channels with a common meaning use the same name and unit for every game (`speed` in km/h,
-`throttle` 0..1, `lap_dist_pct` 0..1, …; see [`ch.rs`](crates/sm-core/src/ch.rs)), and
-game-specific extras are kept alongside.
+Parquet открывается в DuckDB, pandas, Polars и вообще в чём угодно, что его читает. Общие каналы называются одинаково для всех игр и пишутся в одних единицах: `speed` в км/ч, `throttle` от 0 до 1, `lap_dist_pct` от 0 до 1 и так далее, полный список в [`ch.rs`](crates/sm-core/src/ch.rs). Каналы, которые есть только в конкретной игре, тоже сохраняются.
 
-## Project layout
+## Устройство проекта
 
 ```text
 crates/
-  sm-core       data model: channels, frames, the TelemetrySource trait
-  sm-sources    game adapters: ac/ (AC + ACC shared memory, .acreplay import), demo, auto-detect
-  sm-storage    session folders (Parquet + JSON), CSV export
-  sm-recorder   recording loop and lap tracker
-  sm-analysis   lap alignment, comparison, corner detection, lap statistics
-  sm-cli        the `statsmeister` command line tool
+  sm-core       модель данных: каналы, кадры, трейт TelemetrySource
+  sm-sources    адаптеры игр: ac/ (shared memory AC и ACC, импорт .acreplay), демо, автоопределение
+  sm-storage    папки сессий (Parquet + JSON), экспорт в CSV
+  sm-recorder   цикл записи и разбивка на круги
+  sm-analysis   выравнивание и сравнение кругов, поиск поворотов, статистика
+  sm-cli        консольная утилита statsmeister
 app/
-  src/          UI: TypeScript, Vite, uPlot
-  src-tauri/    Tauri 2 shell exposing the crates as commands
+  src/          интерфейс: TypeScript, Vite, uPlot
+  src-tauri/    оболочка на Tauri 2, через неё интерфейс вызывает крейты
 docs/
-  ROADMAP.md    what's next
+  ROADMAP.md    планы
 ```
 
-## Development
+## Разработка
 
 ```bash
 cargo test --workspace
@@ -160,34 +137,30 @@ cargo clippy --workspace --all-targets
 cargo fmt --all
 ```
 
-To run the replay parser against a real file:
+Проверить парсер на своём реплее:
 
 ```bash
 STATSMEISTER_TEST_REPLAY="path/to/file.acreplay" cargo test -p sm-sources
 ```
 
-### Adding a game
+### Как добавить игру
 
-Implement `sm_core::TelemetrySource` in a new module under `crates/sm-sources`, map the
-game's values onto the standard channel names, and register it in `SourceKind` and
-`KNOWN_GAMES`. Recording, storage, analysis and the UI need no changes.
+Реализуйте `sm_core::TelemetrySource` в новом модуле внутри `crates/sm-sources`, переведите значения игры в стандартные каналы и добавьте источник в `SourceKind` и `KNOWN_GAMES`. Запись, хранение, анализ и интерфейс трогать не придётся.
 
-## Roadmap
+## Что дальше
 
-Highlights from [docs/ROADMAP.md](docs/ROADMAP.md):
+Подробно в [docs/ROADMAP.md](docs/ROADMAP.md), коротко:
 
-- iRacing (live + `.ibt` import), Automobilista 2, Le Mans Ultimate / rFactor 2
-- theoretical best lap and per-corner consistency across all laps
-- progress tracking per track and car over days
-- MoTeC i2 `.ld` export
-- AI coach: local (Ollama, LM Studio) or cloud LLMs explaining the corner breakdown
+- iRacing (живая запись и импорт `.ibt`), Automobilista 2, Le Mans Ultimate и rFactor 2;
+- теоретически лучший круг и стабильность по каждому повороту на всех кругах;
+- прогресс по дням для каждой пары трасса + машина;
+- экспорт в формат MoTeC i2 (`.ld`);
+- AI-тренер на локальной модели (Ollama, LM Studio) или облачной, который объясняет разбор по поворотам человеческим языком.
 
-## Contributing
+## Как помочь
 
-Issues and pull requests are welcome. Please run the tests, clippy and rustfmt before
-opening a PR. Reverse-engineered formats (like `.acreplay`) are documented in the module
-that parses them; corrections from real-world files are especially valuable.
+Issues и pull request'ы приветствуются. Перед PR прогоните тесты, clippy и rustfmt. Форматы, разобранные вручную (как `.acreplay`), описаны прямо в модуле, который их читает. Если у вас реплей, на котором парсер ошибается, присылайте: это сильно помогает.
 
-## License
+## Лицензия
 
 [MIT](LICENSE)
