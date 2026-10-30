@@ -1,0 +1,11 @@
+[package]
+name = "sm-analysis"
+description = "Lap alignment, comparison and statistics for StatsMeister"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sm-core.workspace = true
+sm-storage.workspace = true
+serde.workspace = true

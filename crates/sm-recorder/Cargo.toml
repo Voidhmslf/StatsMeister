@@ -1,0 +1,15 @@
+[package]
+name = "sm-recorder"
+description = "Recording loop: polls a telemetry source, detects laps and writes sessions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sm-core.workspace = true
+sm-storage.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+sm-sources.workspace = true

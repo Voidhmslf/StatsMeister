@@ -1,0 +1,17 @@
+[package]
+name = "sm-storage"
+description = "Session storage (Parquet + JSON metadata) and export for StatsMeister"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sm-core.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+directories.workspace = true
+parquet.workspace = true
+arrow-array.workspace = true
+arrow-schema.workspace = true

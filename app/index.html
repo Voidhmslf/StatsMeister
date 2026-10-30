@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StatsMeister</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark"></span>StatsMeister</div>
+      <div class="rec">
+        <select id="source" title="Telemetry source">
+          <option value="auto">Auto-detect</option>
+          <option value="ac">Assetto Corsa</option>
+          <option value="acc">Assetto Corsa Competizione</option>
+          <option value="demo">Demo (synthetic)</option>
+        </select>
+        <button id="rec-btn" class="btn btn-rec"><span class="dot"></span><span id="rec-label">Record</span></button>
+        <span id="rec-status" class="rec-status">Idle</span>
+      </div>
+    </header>
+
+    <aside class="sidebar">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Sessions</h2>
+          <button id="refresh" class="btn btn-ghost" title="Refresh">↻</button>
+        </div>
+        <ul id="sessions" class="sessions"></ul>
+      </section>
+      <section class="panel laps-panel">
+        <div class="panel-head">
+          <h2 id="laps-title">Laps</h2>
+          <button id="export-session" class="btn btn-ghost" disabled>CSV</button>
+        </div>
+        <div class="laps-hint">Pick <b class="a">A</b> (reference) and <b class="b">B</b> (compare)</div>
+        <table id="laps" class="laps"></table>
+      </section>
+    </aside>
+
+    <main class="main">
+      <div id="summary" class="summary"></div>
+      <div id="charts" class="charts">
+        <div class="empty">Select a lap to analyse. No data yet? Choose <b>Demo</b> and press <b>Record</b>.</div>
+      </div>
+    </main>
+
+    <aside class="inspector">
+      <section class="panel">
+        <h2>Track</h2>
+        <canvas id="map" class="map"></canvas>
+        <div class="map-legend"><span class="gain">B gains</span><span class="loss">B loses</span></div>
+      </section>
+      <section class="panel">
+        <h2>Cursor</h2>
+        <table id="readout" class="readout"></table>
+      </section>
+      <section class="panel">
+        <h2>Lap stats</h2>
+        <table id="stats" class="readout"></table>
+      </section>
+    </aside>
+
+    <div id="toast" class="toast"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,45 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/sm-core",
+    "crates/sm-sources",
+    "crates/sm-storage",
+    "crates/sm-analysis",
+    "crates/sm-recorder",
+    "crates/sm-cli",
+    "app/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/your-name/StatsMeister"
+
+[workspace.dependencies]
+sm-core = { path = "crates/sm-core" }
+sm-sources = { path = "crates/sm-sources" }
+sm-storage = { path = "crates/sm-storage" }
+sm-analysis = { path = "crates/sm-analysis" }
+sm-recorder = { path = "crates/sm-recorder" }
+
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4", features = ["derive"] }
+ctrlc = "3"
+directories = "6"
+parquet = { version = "60", default-features = false, features = ["arrow", "zstd"] }
+arrow-array = "60"
+arrow-schema = "60"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Memory",
+    "Win32_System_Diagnostics_ToolHelp",
+] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

@@ -1,0 +1,20 @@
+[package]
+name = "sm-cli"
+description = "StatsMeister command line: record, list, compare and export telemetry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "statsmeister"
+path = "src/main.rs"
+
+[dependencies]
+sm-core.workspace = true
+sm-sources.workspace = true
+sm-storage.workspace = true
+sm-analysis.workspace = true
+sm-recorder.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+ctrlc.workspace = true
