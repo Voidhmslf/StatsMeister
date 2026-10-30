@@ -39,6 +39,8 @@ enum Cmd {
     List,
     /// Show laps of a session ("latest" for the most recent)
     Laps { session: String },
+    /// Theoretical best lap from the best segments of all valid laps
+    Potential { session: String },
     /// Compare two laps: SESSION:LAP (LAP may be "best")
     Compare { reference: String, other: String },
     /// Import an Assetto Corsa replay (.acreplay) as a session
@@ -60,6 +62,7 @@ fn main() -> Result<()> {
         Cmd::Record { source, laps, fast } => record(root, &source, laps, fast),
         Cmd::List => list(&root),
         Cmd::Laps { session } => laps(&root, &session),
+        Cmd::Potential { session } => potential(&root, &session),
         Cmd::Compare { reference, other } => compare(&root, &reference, &other),
         Cmd::Import { file } => import(&root, &file),
         Cmd::Export { session, lap, out } => export(&root, &session, lap, &out),
@@ -164,6 +167,37 @@ fn laps(root: &Path, session: &str) -> Result<()> {
             st.full_throttle_pct,
             st.braking_pct,
             lap_flags(lap)
+        );
+    }
+    Ok(())
+}
+
+fn potential(root: &Path, session: &str) -> Result<()> {
+    let data = sm_storage::load_session(root, &resolve_session(root, session)?.id)?;
+    let p = sm_analysis::potential::session_potential(&data)
+        .context("need at least one valid lap with detectable corners")?;
+    println!(
+        "Theoretical best {}  ({:+.3} s vs best lap {} {}), from laps {:?}",
+        fmt_lap(p.theoretical_best_s),
+        p.theoretical_best_s - p.reference_time_s,
+        p.reference_lap,
+        fmt_lap(p.reference_time_s),
+        p.laps_used
+    );
+    println!("Corner   segment         best lap   gain     spread (±1σ)");
+    for s in &p.segments {
+        println!(
+            "T{:<4}  {:>5.0}–{:<5.0} m   lap {:<4}  {:>6}   ±{:.3} s",
+            s.corner,
+            s.start_m,
+            s.end_m,
+            s.best_lap,
+            if s.gain_s() > 0.0005 {
+                format!("-{:.3}", s.gain_s())
+            } else {
+                "—".into()
+            },
+            s.stdev_s
         );
     }
     Ok(())

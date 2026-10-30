@@ -3195,6 +3195,8 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "sm-core",
+ "sm-recorder",
+ "sm-sources",
  "sm-storage",
 ]
 

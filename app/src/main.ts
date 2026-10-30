@@ -6,7 +6,15 @@ import "uplot/dist/uPlot.min.css";
 import "./style.css";
 import { buildCharts, updateChartHeaders, COLOR_A, COLOR_B, type ChartSet } from "./charts";
 import { TrackMap } from "./trackmap";
-import { isValidLap, type Comparison, type LapRef, type LapStats, type RecorderEvent, type Session } from "./types";
+import {
+  isValidLap,
+  type Comparison,
+  type LapRef,
+  type LapStats,
+  type Potential,
+  type RecorderEvent,
+  type Session,
+} from "./types";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -17,6 +25,7 @@ const state = {
   b: null as LapRef | null,
   cmp: null as Comparison | null,
   stats: new Map<string, LapStats[]>(),
+  potential: new Map<string, Potential | null>(),
   charts: null as ChartSet | null,
   cursor: null as number | null,
   recording: false,
@@ -115,6 +124,10 @@ async function selectSession(id: string, autoPick = true) {
   if (!state.stats.has(id)) {
     state.stats.set(id, await call<LapStats[]>("lap_stats", { session: id }));
   }
+  if (!state.potential.has(id)) {
+    state.potential.set(id, await call<Potential | null>("session_potential", { session: id }));
+  }
+  renderPotential();
   // Keep an existing A selection so laps from different sessions can be compared.
   if (autoPick && !state.a) {
     const valid = s.laps.filter(isValidLap);
@@ -254,6 +267,59 @@ function renderSummary() {
     toast(`Saved ${path}`);
   };
 }
+
+function renderPotential() {
+  const panel = $("potential-panel");
+  const s = state.current;
+  const p = s ? state.potential.get(s.id) : null;
+  panel.hidden = !p;
+  if (!s || !p) return;
+  const gain = p.reference_time_s - p.theoretical_best_s;
+  const worstSpread = Math.max(0.05, ...p.segments.map((x) => x.stdev_s));
+  // Biggest reserves first: that is where practice pays off.
+  const rows = [...p.segments]
+    .sort((x, y) => y.reference_s - y.best_s - (x.reference_s - x.best_s))
+    .map((seg) => {
+      const g = Math.max(0, seg.reference_s - seg.best_s);
+      return `<tr data-corner="${seg.corner}" data-lap="${seg.best_lap}" title="Compare lap ${p.reference_lap} with lap ${seg.best_lap} in T${seg.corner}">
+        <td class="cn">T${seg.corner}</td>
+        <td class="num ${g > 0.0005 ? "gain" : "dim"}">${g > 0.0005 ? `−${g.toFixed(3)}` : "—"}</td>
+        <td class="num dim">${g > 0.0005 ? `lap ${seg.best_lap}` : ""}</td>
+        <td class="spread"><span style="width:${((seg.stdev_s / worstSpread) * 100).toFixed(0)}%"></span></td>
+        <td class="num dim">±${seg.stdev_s.toFixed(2)}</td>
+      </tr>`;
+    })
+    .join("");
+  $("potential").innerHTML = `
+    <div class="pot-head">
+      <span class="pot-time">${fmtLap(p.theoretical_best_s)}</span>
+      <span class="pot-gain">−${gain.toFixed(3)} s</span>
+    </div>
+    <div class="pot-sub">Best segments from laps ${p.laps_used.join(", ")}. Click a corner to see how it was done.</div>
+    <table class="pot-table">
+      <tr><th></th><th class="num">Reserve</th><th class="num">From</th><th colspan="2">Consistency</th></tr>
+      ${rows}
+    </table>`;
+}
+
+$("potential").addEventListener("click", async (e) => {
+  const row = (e.target as HTMLElement).closest<HTMLElement>("tr[data-corner]");
+  const s = state.current;
+  const p = s ? state.potential.get(s.id) : null;
+  if (!row || !s || !p) return;
+  const lap = Number(row.dataset.lap);
+  state.a = { session: s.id, lap: p.reference_lap };
+  state.b = lap !== p.reference_lap ? { session: s.id, lap } : null;
+  renderLaps();
+  await updateComparison();
+  const c = state.cmp?.corners.find((c) => c.number === Number(row.dataset.corner));
+  if (c && state.cmp && state.charts) {
+    state.charts.plots[0]?.setScale("x", { min: state.cmp.x[c.start], max: state.cmp.x[c.end] });
+    $("corners")
+      .querySelector(`tr[data-corner="${c.number}"]`)
+      ?.classList.add("sel");
+  }
+});
 
 function renderCorners() {
   const el = $("corners");
@@ -448,6 +514,7 @@ listen<RecorderEvent>("recorder", ({ payload: e }) => {
     case "session_saved":
       toast(`Session saved: ${e.laps} laps`);
       state.stats.delete(e.id);
+      state.potential.delete(e.id);
       loadSessions();
       break;
     case "session_discarded":

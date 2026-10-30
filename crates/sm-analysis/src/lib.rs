@@ -5,6 +5,7 @@
 //! time, so the same corner lines up across laps of different pace.
 
 pub mod corners;
+pub mod potential;
 pub mod stats;
 
 use serde::Serialize;

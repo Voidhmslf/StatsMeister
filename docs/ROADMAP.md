@@ -19,7 +19,8 @@ headers.
 - ~~Corner detection and per-corner time loss, min speed, braking and
   throttle points~~ (done). Next: corner names per track via community JSON
   files; peak brake pressure, trail braking, exit speed.
-- Sector times, theoretical best lap, consistency (std-dev per corner).
+- ~~Theoretical best lap and per-corner consistency (std-dev)~~ (done).
+  Next: rule-based "why" hints, progress per track + car across days.
 - Tyre/brake temperature and pressure windows per stint.
 - Math channels (user formulas), histograms, XY scatter (e.g. g-g diagram).
 - DuckDB over all Parquet files for cross-session queries.

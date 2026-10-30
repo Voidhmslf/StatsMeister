@@ -75,6 +75,25 @@ export interface LapStats {
   max_g_brake: number;
 }
 
+export interface SegmentStat {
+  corner: number;
+  start_m: number;
+  end_m: number;
+  reference_s: number;
+  best_s: number;
+  best_lap: number;
+  mean_s: number;
+  stdev_s: number;
+}
+
+export interface Potential {
+  reference_lap: number;
+  reference_time_s: number;
+  theoretical_best_s: number;
+  laps_used: number[];
+  segments: SegmentStat[];
+}
+
 export interface LapRef {
   session: string;
   lap: number;

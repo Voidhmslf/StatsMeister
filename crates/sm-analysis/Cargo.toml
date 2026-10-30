@@ -9,3 +9,7 @@ license.workspace = true
 sm-core.workspace = true
 sm-storage.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+sm-sources.workspace = true
+sm-recorder.workspace = true

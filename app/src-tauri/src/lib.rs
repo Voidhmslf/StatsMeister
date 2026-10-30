@@ -134,6 +134,16 @@ async fn compare_laps(
     ))
 }
 
+/// Theoretical best lap and per-corner consistency for a session.
+#[tauri::command]
+async fn session_potential(
+    state: State<'_, AppState>,
+    session: String,
+) -> Result<Option<sm_analysis::potential::Potential>, String> {
+    let data = state.session(&session)?;
+    Ok(sm_analysis::potential::session_potential(&data))
+}
+
 /// Exports to `Documents\StatsMeister Exports` and returns the file path.
 #[tauri::command]
 async fn export_csv(
@@ -259,6 +269,7 @@ pub fn run() {
             delete_session,
             lap_stats,
             compare_laps,
+            session_potential,
             export_csv,
             import_replay,
             recorder_status,

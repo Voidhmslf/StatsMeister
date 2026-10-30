@@ -597,6 +597,60 @@ td.gain {
   color: var(--dim);
 }
 
+/* ---------- potential ---------- */
+
+.pot-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.pot-time {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--best);
+}
+
+.pot-gain {
+  font-family: var(--mono);
+  color: var(--gain);
+}
+
+.pot-sub {
+  color: var(--muted);
+  font-size: 11px;
+  margin: 4px 0 8px;
+}
+
+.pot-table td {
+  white-space: nowrap;
+}
+
+.pot-table tr[data-corner] {
+  cursor: pointer;
+}
+
+.pot-table tr[data-corner]:hover td {
+  background: var(--panel-2);
+}
+
+.pot-table .cn {
+  font-weight: 700;
+}
+
+.pot-table .spread {
+  width: 30%;
+}
+
+.pot-table .spread span {
+  display: block;
+  height: 6px;
+  min-width: 2px;
+  border-radius: 3px;
+  background: #f59e0b;
+}
+
 /* ---------- drop overlay ---------- */
 
 .drop {
